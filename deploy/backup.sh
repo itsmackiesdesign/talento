@@ -29,6 +29,8 @@ docker run --rm --network none \
     alpine:3.22 \
     tar -czf "/backup/talento-uploads-${timestamp}.tar.gz" -C /source .
 
+chmod 600 "${backup_dir}/talento-uploads-${timestamp}.tar.gz"
+
 find "$backup_dir" -maxdepth 1 -type f \
     \( -name 'talento-db-*.dump' -o -name 'talento-uploads-*.tar.gz' \) \
     -mtime +7 -delete
