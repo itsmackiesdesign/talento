@@ -46,7 +46,6 @@ No secondary saturated accent. Status colors appear only inside product UI where
 - Micro interaction: `180–280ms`.
 - Copy reveal: `700–950ms`, max `28px` travel.
 - Shot envelope: enter `0–.22`, hold `.22–.70`, exit `.70–1`.
-- Intro prelude: `7.6s` after the live scene reports ready; orbit `0–.72`, settle `.72–1`, overlay release from `.84`.
 - Maximum two meaningful moving layers at once.
 - No perpetual turntable rotation; the portal stops at authored poses.
 
@@ -64,3 +63,4 @@ No secondary saturated accent. Status colors appear only inside product UI where
 - WebGL is decorative (`aria-hidden`); all meaning remains in DOM.
 - Reduced motion receives composed static portal poses and normal document scrolling.
 - Mobile uses a separately composed portal and product fragments, not a scaled desktop scene.
+
