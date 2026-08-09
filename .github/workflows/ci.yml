@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: talento
+          POSTGRES_PASSWORD: talento
+          POSTGRES_DB: talento_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U talento"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://talento:talento@localhost:5432/talento_test
+      REDIS_URL: redis://localhost:6379/15
+      JWT_SECRET: ci-secret-key-long-enough-for-hmac-sha256
+      BOT_TOKEN_ENCRYPTION_KEY: ci-encryption-key-for-tests-only-32bytes
+      BASE_URL: https://ci.example.com
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check app tests
+      - name: Type check
+        run: mypy app || true  # advisory until annotations are complete
+      - name: Migrations apply cleanly
+        run: alembic upgrade head
+      - name: Tests
+        run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Type check
+        run: npm run lint
+      - name: Build
+        run: npm run build

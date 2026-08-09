@@ -1,0 +1,299 @@
+/* Landing page — scoped design system, deliberately independent from the app's
+   shadcn light theme. Chat-native, dark, Telegram-cyan against near-black navy,
+   with a lime spark for contrast and a faint Uzbek ikat lattice for texture. */
+
+.tl {
+  --tl-bg: #090c12;
+  --tl-bg-alt: #0d121c;
+  --tl-card: rgba(255, 255, 255, 0.035);
+  --tl-card-hover: rgba(255, 255, 255, 0.06);
+  --tl-border: rgba(255, 255, 255, 0.09);
+  --tl-border-strong: rgba(255, 255, 255, 0.16);
+  --tl-cyan: #35b4e8;
+  --tl-cyan-dim: rgba(53, 180, 232, 0.16);
+  --tl-cyan-ink: #04141c;
+  --tl-lime: #d7ff5e;
+  --tl-lime-ink: #0e1400;
+  --tl-coral: #ff7a59;
+  --tl-text: #eef3fb;
+  --tl-muted: #9aa6bd;
+  --tl-muted-2: #616d85;
+
+  --tl-font-display: "Fraunces", ui-serif, Georgia, serif;
+  --tl-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --tl-font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  background: var(--tl-bg);
+  color: var(--tl-text);
+  font-family: var(--tl-font-sans);
+  position: relative;
+  overflow-x: clip;
+}
+
+.tl * {
+  box-sizing: border-box;
+}
+
+.tl-font-display {
+  font-family: var(--tl-font-display);
+}
+.tl-font-mono {
+  font-family: var(--tl-font-mono);
+}
+
+/* ---------- atmosphere ---------- */
+
+.tl-pattern {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='84' height='84'%3E%3Cpath d='M42 4 L79 42 L42 79 L4 42 Z' fill='none' stroke='%2335b4e8' stroke-opacity='0.09' stroke-width='1'/%3E%3Cpath d='M42 22 L61 42 L42 61 L22 42 Z' fill='none' stroke='%23d7ff5e' stroke-opacity='0.07' stroke-width='1'/%3E%3Ccircle cx='42' cy='42' r='1.6' fill='%2335b4e8' fill-opacity='0.16'/%3E%3C/svg%3E");
+  background-size: 84px 84px;
+}
+
+.tl-glow {
+  background:
+    radial-gradient(640px circle at 14% -6%, rgba(53, 180, 232, 0.28), transparent 60%),
+    radial-gradient(560px circle at 92% 4%, rgba(215, 255, 94, 0.12), transparent 55%),
+    radial-gradient(900px circle at 50% 120%, rgba(53, 180, 232, 0.1), transparent 60%);
+}
+
+.tl-grain {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
+
+/* ---------- motion ---------- */
+
+@keyframes tl-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tl-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes tl-float-slow {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-0.4deg);
+  }
+  50% {
+    transform: translateY(-14px) rotate(0.4deg);
+  }
+}
+
+@keyframes tl-blink-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes tl-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes tl-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(53, 180, 232, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(53, 180, 232, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(53, 180, 232, 0);
+  }
+}
+
+@keyframes tl-bar-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+.tl-anim-in {
+  animation: tl-fade-up 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.tl-delay-1 {
+  animation-delay: 0.06s;
+}
+.tl-delay-2 {
+  animation-delay: 0.16s;
+}
+.tl-delay-3 {
+  animation-delay: 0.28s;
+}
+.tl-delay-4 {
+  animation-delay: 0.4s;
+}
+.tl-delay-5 {
+  animation-delay: 0.52s;
+}
+.tl-delay-6 {
+  animation-delay: 0.64s;
+}
+
+.tl-float {
+  animation: tl-float 6s ease-in-out infinite;
+}
+.tl-float-slow {
+  animation: tl-float-slow 9s ease-in-out infinite;
+}
+
+.tl-reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition:
+    opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tl-reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.tl-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--tl-muted);
+  display: inline-block;
+  animation: tl-blink-dot 1.3s ease-in-out infinite;
+}
+.tl-dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.tl-dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.tl-marquee-track {
+  display: flex;
+  width: max-content;
+  animation: tl-marquee 28s linear infinite;
+}
+.tl-marquee-wrap:hover .tl-marquee-track {
+  animation-play-state: paused;
+}
+
+.tl-pulse {
+  animation: tl-pulse-ring 2.4s ease-out infinite;
+}
+
+/* ---------- surfaces ---------- */
+
+.tl-card {
+  background: var(--tl-card);
+  border: 1px solid var(--tl-border);
+  transition:
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.3s ease,
+    background 0.3s ease;
+}
+.tl-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(53, 180, 232, 0.4);
+  background: var(--tl-card-hover);
+}
+
+.tl-kanban-card {
+  transition: transform 0.25s ease, border-color 0.25s ease;
+}
+.tl-kanban-card:hover {
+  transform: translateY(-2px) rotate(-0.4deg);
+  border-color: rgba(53, 180, 232, 0.45);
+}
+
+.tl-phone {
+  border-radius: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(185deg, #101827 0%, #070a10 100%);
+  box-shadow:
+    0 50px 120px -30px rgba(0, 0, 0, 0.65),
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+}
+
+.tl-bubble-bot {
+  background: rgba(255, 255, 255, 0.055);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px 16px 16px 4px;
+}
+.tl-bubble-user {
+  background: linear-gradient(135deg, var(--tl-cyan), #1c84b4);
+  border-radius: 16px 16px 4px 16px;
+  color: var(--tl-cyan-ink);
+}
+
+.tl-scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* accessible-motion: respect user preference */
+@media (prefers-reduced-motion: reduce) {
+  .tl-anim-in,
+  .tl-float,
+  .tl-float-slow,
+  .tl-dot,
+  .tl-marquee-track,
+  .tl-pulse {
+    animation: none !important;
+  }
+  .tl-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ---------- FAQ accordion (grid-rows trick, no JS height calc) ---------- */
+
+.tl-faq-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tl-faq-panel.tl-open {
+  grid-template-rows: 1fr;
+}
+.tl-faq-panel > div {
+  overflow: hidden;
+}
+
+/* ---------- misc ---------- */
+
+.tl-text-gradient {
+  background: linear-gradient(100deg, var(--tl-text) 30%, var(--tl-cyan) 75%, var(--tl-lime) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.tl-bar {
+  transform-origin: bottom;
+  animation: tl-bar-grow 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}

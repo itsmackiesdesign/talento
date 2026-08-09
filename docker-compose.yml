@@ -1,0 +1,97 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: talento
+      POSTGRES_PASSWORD: talento
+      POSTGRES_DB: talento
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U talento"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1 --appendonly no
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Runs migrations once, then exits. api/worker wait for it to succeed, which removes the
+  # usual race where several API replicas try to migrate the same database at boot.
+  migrate:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://talento:talento@db:5432/talento
+    command: alembic upgrade head
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://talento:talento@db:5432/talento
+      REDIS_URL: redis://redis:6379/0
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+      - uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: ./backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://talento:talento@db:5432/talento
+      REDIS_URL: redis://redis:6379/0
+    command: celery -A app.workers.celery_app.celery_app worker --loglevel=info --concurrency=2
+    volumes:
+      - ./backend:/app
+      - uploads:/app/uploads
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      VITE_API_PROXY: http://api:8000
+    volumes:
+      - ./frontend:/app
+      # Anonymous volume keeps the image's node_modules instead of letting the bind
+      # mount shadow it with the host's (possibly wrong-architecture) copy.
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  uploads:
