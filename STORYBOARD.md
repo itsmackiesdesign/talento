@@ -1,6 +1,10 @@
 # talento — Cinematic Landing Storyboard
 
-The experience uses measured `[data-shot]` DOM geometry. Each shot is sampled locally from `0..1`; scene and copy share the same named range. Resize and font completion trigger remeasurement.
+The experience opens with a 7.6-second authored prelude, then uses measured `[data-shot]` DOM geometry. Each shot is sampled locally from `0..1`; scene and copy share the same named range. Resize and font completion trigger remeasurement.
+
+## Intro prelude
+
+The live Open Portal actor enters from depth, completes a weighted multi-axis X/Y/Z orbit, and passes the product thesis — candidate already in Telegram → open access → move talent into work. From 72% it settles into the exact `signal` pose while the overlay fades, so the intro and landing share one continuous WebGL object with no SVG swap or position jump.
 
 | Shot / anchor | Narrative job | Actor pose / screen anchor | Copy zone and depth | Primary motion / envelope | Continuity | Mobile recompose | Reduced-motion pose |
 |---|---|---|---|---|---|---|---|
@@ -19,4 +23,3 @@ The experience uses measured `[data-shot]` DOM geometry. Each shot is sampled lo
 - Previous copy yields before a large actor/camera move begins.
 - Each boundary will be captured at previous hold, 25%, midpoint, 75% and next hold; one reverse and one rapid two-shot jump are mandatory.
 - The final shot owns the resolved pose explicitly and never reuses the previous segment start.
-

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { SVGLoader } from "three/examples/jsm/loaders/SVGLoader.js";
 
-import type { LandingTimeline } from "./landing-types";
+import type { IntroTimeline, LandingTimeline } from "./landing-types";
 
 type Pose = {
   position: [number, number, number];
@@ -78,7 +78,34 @@ function PortalGeometry() {
   );
 }
 
-function PortalActor({ timeline, reducedMotion }: { timeline: LandingTimeline; reducedMotion: boolean }) {
+function getIntroOrbit(progress: number) {
+  const travel = smooth(clamp01(progress / 0.72));
+  const angle = -1.08 + travel * Math.PI * 2.65;
+  return {
+    position: [
+      Math.sin(angle) * (3.7 - travel * 1.6),
+      Math.cos(angle * 0.73) * (1.72 - travel * 0.34),
+      -0.8 + Math.cos(angle) * 1.35,
+    ] as [number, number, number],
+    rotation: [
+      0.72 + travel * Math.PI * 2.2,
+      -1.4 + travel * Math.PI * 3.15,
+      -0.45 + travel * Math.PI * 1.4,
+    ] as [number, number, number],
+    scale: 0.54 + travel * 0.98,
+    camera: [0, 0, 10.6 - travel * 1.2] as [number, number, number],
+  };
+}
+
+function PortalActor({
+  timeline,
+  introTimeline,
+  reducedMotion,
+}: {
+  timeline: LandingTimeline;
+  introTimeline: IntroTimeline;
+  reducedMotion: boolean;
+}) {
   const actor = useRef<THREE.Group>(null);
   const rearLayer = useRef<THREE.Group>(null);
   const midLayer = useRef<THREE.Group>(null);
@@ -88,25 +115,43 @@ function PortalActor({ timeline, reducedMotion }: { timeline: LandingTimeline; r
 
   useFrame((state) => {
     const sample = timeline.current;
+    const introProgress = reducedMotion ? 1 : introTimeline.current;
     const current = POSES[sample.index] ?? POSES[0];
     const next = POSES[Math.min(POSES.length - 1, sample.index + 1)];
     const transition = reducedMotion ? 0 : smooth(clamp01((sample.local - 0.7) / 0.3));
     const time = state.clock.elapsedTime;
 
+    let position: [number, number, number] = [
+      THREE.MathUtils.lerp(current.position[0], next.position[0], transition),
+      THREE.MathUtils.lerp(current.position[1], next.position[1], transition),
+      THREE.MathUtils.lerp(current.position[2], next.position[2], transition),
+    ];
+    let rotation: [number, number, number] = [
+      THREE.MathUtils.lerp(current.rotation[0], next.rotation[0], transition),
+      THREE.MathUtils.lerp(current.rotation[1], next.rotation[1], transition),
+      THREE.MathUtils.lerp(current.rotation[2], next.rotation[2], transition),
+    ];
+    let actorScale = THREE.MathUtils.lerp(current.scale, next.scale, transition);
+    let cameraPosition: [number, number, number] = [
+      THREE.MathUtils.lerp(current.camera[0], next.camera[0], transition),
+      THREE.MathUtils.lerp(current.camera[1], next.camera[1], transition),
+      THREE.MathUtils.lerp(current.camera[2], next.camera[2], transition),
+    ];
+
+    if (introProgress < 1) {
+      const orbit = getIntroOrbit(Math.min(introProgress, 0.72));
+      const settle = smooth(clamp01((introProgress - 0.72) / 0.28));
+      position = orbit.position.map((value, index) => THREE.MathUtils.lerp(value, POSES[0].position[index], settle)) as [number, number, number];
+      rotation = orbit.rotation.map((value, index) => THREE.MathUtils.lerp(value, POSES[0].rotation[index], settle)) as [number, number, number];
+      actorScale = THREE.MathUtils.lerp(orbit.scale, POSES[0].scale, settle);
+      cameraPosition = orbit.camera.map((value, index) => THREE.MathUtils.lerp(value, POSES[0].camera[index], settle)) as [number, number, number];
+    }
+
     if (actor.current) {
-      actor.current.position.set(
-        THREE.MathUtils.lerp(current.position[0], next.position[0], transition),
-        THREE.MathUtils.lerp(current.position[1], next.position[1], transition),
-        THREE.MathUtils.lerp(current.position[2], next.position[2], transition),
-      );
-      actor.current.rotation.set(
-        THREE.MathUtils.lerp(current.rotation[0], next.rotation[0], transition),
-        THREE.MathUtils.lerp(current.rotation[1], next.rotation[1], transition),
-        THREE.MathUtils.lerp(current.rotation[2], next.rotation[2], transition),
-      );
+      actor.current.position.set(...position);
+      actor.current.rotation.set(...rotation);
       const idle = reducedMotion ? 0 : Math.sin(time * 0.38) * 0.012;
-      const scale = THREE.MathUtils.lerp(current.scale, next.scale, transition) + idle;
-      actor.current.scale.setScalar(scale);
+      actor.current.scale.setScalar(actorScale + idle);
     }
 
     const systemOpen = sample.index === 6 ? smooth(clamp01((sample.local - 0.44) / 0.28)) : 0;
@@ -114,11 +159,7 @@ function PortalActor({ timeline, reducedMotion }: { timeline: LandingTimeline; r
     if (midLayer.current) midLayer.current.position.z = -0.17 - systemOpen * 0.55;
     if (glow.current) glow.current.intensity = 18 + Math.sin(time * 0.7) * (reducedMotion ? 0 : 1.2);
 
-    camera.position.set(
-      THREE.MathUtils.lerp(current.camera[0], next.camera[0], transition),
-      THREE.MathUtils.lerp(current.camera[1], next.camera[1], transition),
-      THREE.MathUtils.lerp(current.camera[2], next.camera[2], transition),
-    );
+    camera.position.set(...cameraPosition);
     target.set(0, 0, 0);
     camera.lookAt(target);
   });
@@ -149,7 +190,7 @@ function PortalActor({ timeline, reducedMotion }: { timeline: LandingTimeline; r
   );
 }
 
-function SceneContent({ timeline, reducedMotion }: { timeline: LandingTimeline; reducedMotion: boolean }) {
+function SceneContent({ timeline, introTimeline, reducedMotion }: { timeline: LandingTimeline; introTimeline: IntroTimeline; reducedMotion: boolean }) {
   return (
     <>
       <color attach="background" args={["#050507"]} />
@@ -169,7 +210,7 @@ function SceneContent({ timeline, reducedMotion }: { timeline: LandingTimeline; 
         castShadow
         shadow-mapSize={[1024, 1024]}
       />
-      <PortalActor timeline={timeline} reducedMotion={reducedMotion} />
+      <PortalActor timeline={timeline} introTimeline={introTimeline} reducedMotion={reducedMotion} />
       <ContactShadows position={[0, -2.25, 0]} opacity={0.48} blur={2.8} scale={14} far={6} />
 
       <EffectComposer multisampling={2}>
@@ -184,10 +225,12 @@ function SceneContent({ timeline, reducedMotion }: { timeline: LandingTimeline; 
 
 export default function LandingScene({
   timeline,
+  introTimeline,
   reducedMotion,
   onReady,
 }: {
   timeline: LandingTimeline;
+  introTimeline: IntroTimeline;
   reducedMotion: boolean;
   onReady: () => void;
 }) {
@@ -203,8 +246,7 @@ export default function LandingScene({
         requestAnimationFrame(onReady);
       }}
     >
-      <SceneContent timeline={timeline} reducedMotion={reducedMotion} />
+      <SceneContent timeline={timeline} introTimeline={introTimeline} reducedMotion={reducedMotion} />
     </Canvas>
   );
 }
-

@@ -7,4 +7,4 @@ export type ShotSample = {
 };
 
 export type LandingTimeline = MutableRefObject<ShotSample>;
-
+export type IntroTimeline = MutableRefObject<number>;

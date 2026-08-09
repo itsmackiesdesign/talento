@@ -27,7 +27,7 @@ import Lenis from "lenis";
 import { LANGUAGES, setLanguage } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
-import type { LandingTimeline, ShotSample } from "./landing-types";
+import type { IntroTimeline, LandingTimeline, ShotSample } from "./landing-types";
 import "./landing.css";
 
 const LandingScene = lazy(() => import("./LandingScene"));
@@ -49,7 +49,7 @@ type Locale = "ru" | "uz" | "en";
 const COPY = {
   ru: {
     nav: { story: "Путь кандидата", product: "Продукт", system: "Система", faq: "Вопросы", login: "Войти", start: "Запустить бота" },
-    intro: { line1: "ТАЛАНТ", line2: "ISTE’DOD", line3: "TALENT", skip: "Пропустить" },
+    intro: { line1: "ТАЛАНТ", line2: "ISTE’DOD", line3: "TALENT", eyebrow: "КАНДИДАТ УЖЕ В TELEGRAM", thesis: "ОТКРОЙТЕ ДОСТУП", bridge: "И ПЕРЕВЕДИТЕ ТАЛАНТ В РАБОТУ", skip: "Пропустить" },
     hero: {
       eyebrow: "HR-ПЛАТФОРМА ДЛЯ TELEGRAM",
       title: "Найм начинается там, где уже живут кандидаты.",
@@ -138,7 +138,7 @@ const COPY = {
   },
   uz: {
     nav: { story: "Nomzod yo‘li", product: "Mahsulot", system: "Tizim", faq: "Savollar", login: "Kirish", start: "Botni ishga tushirish" },
-    intro: { line1: "ISTE’DOD", line2: "TALANT", line3: "ТАЛАНТ", skip: "O‘tkazib yuborish" },
+    intro: { line1: "ISTE’DOD", line2: "TALANT", line3: "ТАЛАНТ", eyebrow: "NOMZOD TELEGRAMDA", thesis: "ISTE’DODGA YO‘L OCHING", bridge: "VA UNI JAMOAGA OLIB KELING", skip: "O‘tkazib yuborish" },
     hero: {
       eyebrow: "TELEGRAM UCHUN HR-PLATFORMA",
       title: "Yollash nomzodlar allaqachon yashaydigan joyda boshlanadi.",
@@ -159,7 +159,7 @@ const COPY = {
   },
   en: {
     nav: { story: "Candidate journey", product: "Product", system: "System", faq: "FAQ", login: "Sign in", start: "Launch a bot" },
-    intro: { line1: "TALENT", line2: "ТАЛАНТ", line3: "ISTE’DOD", skip: "Skip" },
+    intro: { line1: "TALENT", line2: "ТАЛАНТ", line3: "ISTE’DOD", eyebrow: "THE CANDIDATE IS ALREADY IN TELEGRAM", thesis: "OPEN ACCESS", bridge: "AND MOVE TALENT INTO WORK", skip: "Skip" },
     hero: { eyebrow: "AN HR PLATFORM FOR TELEGRAM", title: "Hiring starts where candidates already live.", alternate: "Open access to talent.", body: "Launch your own Telegram vacancy bot. Candidates complete the journey in chat while your team manages every application in one HR workspace.", primary: "Launch your bot", secondary: "See the candidate journey", proofs: ["10 minutes to launch", "8 question types", "RU · UZ · EN"] },
     discover: { index: "01 · DISCOVER", title: "The vacancy meets candidates in a familiar interface.", body: "Language, branch, conditions and application — entirely inside Telegram.", bot: "Acme Coffee · careers", online: "bot online", welcome: "Hi! Which language would you like to use?", branch: "Choose a branch", branchValue: "Chilanzar · Tashkent", role: "Barista", salary: "UZS 4,000,000–6,000,000", location: "12 Bunyodkor Street", apply: "Apply" },
     apply: { index: "02 · APPLY", title: "The application feels like a conversation, not a long form.", body: "talento asks one question at a time, validates the answer and preserves an exact application snapshot.", progress: "Question 3 of 5", question: "Which shifts can you work?", options: ["Morning", "Day", "Evening", "Weekends"], types: "Text · choice · number · phone · file · date/time" },
@@ -281,22 +281,22 @@ function LanguageSwitch() {
   );
 }
 
-function Intro({ copy, onComplete }: { copy: (typeof COPY)[Locale]["intro"]; onComplete: () => void }) {
+function Intro({ copy, leaving, playing, onComplete }: { copy: (typeof COPY)[Locale]["intro"]; leaving: boolean; playing: boolean; onComplete: () => void }) {
   return (
-    <div className="tlc-intro" role="dialog" aria-label="talento intro">
-      <div className="tlc-intro__humans" aria-hidden />
-      <div className="tlc-intro__rings" aria-hidden>
-        <span />
-        <span />
-        <span />
-        <img src="/assets/brand/talento-symbol-blue.svg" alt="" />
-      </div>
+    <div className={cn("tlc-intro", playing && "is-playing", leaving && "is-leaving")} role="dialog" aria-label="talento intro">
+      <div className="tlc-intro__index" aria-hidden><span>OPEN PORTAL</span><span>00 — 01</span></div>
       <div className="tlc-intro__type" aria-hidden>
         <span>{copy.line1}</span>
         <span>{copy.line2}</span>
         <span>{copy.line3}</span>
       </div>
-      <div className="tlc-intro__brand"><BrandLogo /></div>
+      <div className="tlc-intro__message">
+        <span>{copy.eyebrow}</span>
+        <strong>{copy.thesis}</strong>
+        <p>{copy.bridge}</p>
+      </div>
+      <div className="tlc-intro__axes" aria-hidden><span>X · DISCOVER</span><span>Y · APPLY</span><span>Z · MANAGE</span></div>
+      <div className="tlc-intro__brand"><BrandLogo /><small>HIRING THROUGH TELEGRAM</small></div>
       <button type="button" className="tlc-intro__skip" onClick={onComplete}>{copy.skip} <ArrowRight /></button>
     </div>
   );
@@ -416,7 +416,9 @@ export default function LandingPage() {
   const timeline = useRef<ShotSample>({ index: 0, id: "signal", local: 0 });
   const [activeShot, setActiveShot] = useState<ShotId>("signal");
   const journeyRef = useJourney(timeline, setActiveShot);
+  const introTimeline = useRef(0);
   const [introVisible, setIntroVisible] = useState(true);
+  const [introLeaving, setIntroLeaving] = useState(false);
   const [sceneReady, setSceneReady] = useState(false);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [renderPath, setRenderPath] = useState<"live" | "poster">("poster");
@@ -439,25 +441,49 @@ export default function LandingPage() {
       console.info(`[talento] poster fallback: ${reduced ? "reduced-motion" : "webgl-unavailable"}`);
       setSceneReady(true);
     }
-    const seen = sessionStorage.getItem("talento-intro-seen") === "1";
-    const timer = window.setTimeout(() => {
-      setIntroVisible(false);
-      sessionStorage.setItem("talento-intro-seen", "1");
-    }, seen ? 1100 : 4200);
-    return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    if (!sceneReady || !introVisible) return;
+    if (reducedMotion) {
+      introTimeline.current = 1;
+      setIntroLeaving(true);
+      const reducedTimer = window.setTimeout(() => setIntroVisible(false), 900);
+      return () => window.clearTimeout(reducedTimer);
+    }
+
+    const duration = 7600;
+    const startedAt = window.performance.now();
+    let frame = 0;
+    const play = (now: number) => {
+      const progress = Math.min(1, Math.max(0, (now - startedAt) / duration));
+      introTimeline.current = progress;
+      if (progress >= 0.84) setIntroLeaving(true);
+      if (progress >= 1) {
+        setIntroVisible(false);
+        sessionStorage.setItem("talento-intro-seen", "1");
+        return;
+      }
+      frame = window.requestAnimationFrame(play);
+    };
+    frame = window.requestAnimationFrame(play);
+    return () => window.cancelAnimationFrame(frame);
+  }, [introVisible, reducedMotion, sceneReady]);
+
   const closeIntro = () => {
-    setIntroVisible(false);
+    introTimeline.current = 1;
+    setIntroLeaving(true);
     sessionStorage.setItem("talento-intro-seen", "1");
+    window.setTimeout(() => setIntroVisible(false), 850);
   };
 
   const timelineValue = timeline as LandingTimeline;
+  const introTimelineValue = introTimeline as IntroTimeline;
   const sceneClass = useMemo(() => `tlc-scene tlc-scene--${activeShot}`, [activeShot]);
 
   return (
-    <div className="tlc">
-      {introVisible && <Intro copy={copy.intro} onComplete={closeIntro} />}
+    <div className={cn("tlc", introVisible && "is-intro") }>
+      {introVisible && <Intro copy={copy.intro} leaving={introLeaving} playing={sceneReady} onComplete={closeIntro} />}
       <a className="tlc-skip-link" href="#open-access">Skip to content</a>
       <Navigation copy={copy.nav} />
 
@@ -465,7 +491,7 @@ export default function LandingPage() {
         <div className="tlc-scene__poster"><img src="/assets/brand/talento-symbol-blue.svg" alt="" /></div>
         {renderPath === "live" && (
           <Suspense fallback={<div className="tlc-scene__loader"><i /><span>OPENING TALENT</span></div>}>
-            <LandingScene timeline={timelineValue} reducedMotion={reducedMotion} onReady={() => setSceneReady(true)} />
+            <LandingScene timeline={timelineValue} introTimeline={introTimelineValue} reducedMotion={reducedMotion} onReady={() => setSceneReady(true)} />
           </Suspense>
         )}
       </div>
