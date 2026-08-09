@@ -142,6 +142,8 @@ services:
     pids_limit: 300
     mem_limit: 768m
     init: true
+    healthcheck:
+      disable: true
     logging: *default-logging
 
   frontend:
