@@ -1,7 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, Copy, Lock, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  Crown,
+  Lock,
+  Mail,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+  UserMinus,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { ImageUpload } from "@/components/image-upload";
@@ -41,7 +54,8 @@ import {
 } from "@/components/ui/select";
 import { api, ApiError } from "@/lib/api";
 import { LANGUAGE_LABELS, SUPPORTED_LANGUAGES } from "@/lib/types";
-import type { ApplicationStatusOut, Bot, Company, Language } from "@/lib/types";
+import type { ApplicationStatusOut, Bot, Company, Language, TeamMember } from "@/lib/types";
+import { formatDate } from "@/lib/utils";
 
 function BotTab() {
   const { t } = useTranslation();
@@ -440,37 +454,284 @@ function CompanyTab() {
 
 function TeamTab() {
   const { t } = useTranslation();
-  const team = useQuery({ queryKey: ["team"], queryFn: api.company.team });
+  const qc = useQueryClient();
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteLink, setInviteLink] = useState("");
+  const [confirmAction, setConfirmAction] = useState<{
+    kind: "remove" | "transfer";
+    member: TeamMember;
+  } | null>(null);
 
-  if (team.isPending) return <Skeleton className="h-48" />;
+  const me = useQuery({ queryKey: ["me"], queryFn: api.auth.me });
+  const team = useQuery({ queryKey: ["team"], queryFn: api.company.team });
+  const isOwner = me.data?.role === "owner";
+  const invitations = useQuery({
+    queryKey: ["team-invitations"],
+    queryFn: api.company.invitations,
+    enabled: isOwner,
+  });
+
+  const refreshTeam = async () => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["team"] }),
+      qc.invalidateQueries({ queryKey: ["team-invitations"] }),
+      qc.invalidateQueries({ queryKey: ["me"] }),
+    ]);
+  };
+
+  const invite = useMutation({
+    mutationFn: api.company.invite,
+    onSuccess: async (created) => {
+      setInviteLink(created.invite_url);
+      await qc.invalidateQueries({ queryKey: ["team-invitations"] });
+      toast.success(t("settings.inviteCreated"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const revoke = useMutation({
+    mutationFn: api.company.revokeInvitation,
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["team-invitations"] });
+      toast.success(t("settings.inviteRevoked"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: api.company.removeMember,
+    onSuccess: async () => {
+      setConfirmAction(null);
+      await refreshTeam();
+      toast.success(t("settings.memberRemoved"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const transfer = useMutation({
+    mutationFn: api.company.transferOwnership,
+    onSuccess: async () => {
+      setConfirmAction(null);
+      await refreshTeam();
+      toast.success(t("settings.ownershipTransferred"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const copyInvite = async (url: string) => {
+    await navigator.clipboard.writeText(url);
+    toast.success(t("toast.linkCopied"));
+  };
+
+  const openInvite = (email = "") => {
+    setInviteEmail(email);
+    setInviteLink("");
+    setInviteOpen(true);
+  };
+
+  if (team.isPending || me.isPending) return <Skeleton className="h-48" />;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{t("settings.tabTeam")}</CardTitle>
-        <CardDescription>{t("settings.inviteSoon")}</CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {(team.data ?? []).map((member) => (
-          <div
-            key={member.user_id}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3"
-          >
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{member.full_name}</p>
-              <p className="truncate text-xs text-muted-foreground">{member.email}</p>
-            </div>
-            <div className="flex gap-2">
-              {member.telegram_linked && <Badge variant="success">Telegram</Badge>}
-              <Badge variant="secondary">{member.role}</Badge>
-            </div>
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
+          <div>
+            <CardTitle className="text-base">{t("settings.tabTeam")}</CardTitle>
+            <CardDescription>{t("settings.teamDesc")}</CardDescription>
           </div>
-        ))}
-        <Button variant="outline" disabled>
-          {t("settings.inviteMember")}
-        </Button>
-      </CardContent>
-    </Card>
+          {isOwner && (
+            <Button onClick={() => openInvite()}>
+              <Mail className="mr-2 h-4 w-4" />
+              {t("settings.inviteMember")}
+            </Button>
+          )}
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {(team.data ?? []).map((member) => (
+            <div
+              key={member.user_id}
+              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">
+                  {member.full_name}
+                  {member.user_id === me.data?.user.id && (
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">
+                      ({t("settings.you")})
+                    </span>
+                  )}
+                </p>
+                <p className="truncate text-xs text-muted-foreground">{member.email}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {t("settings.joined", { date: formatDate(member.joined_at) })}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {member.telegram_linked && <Badge variant="success">Telegram</Badge>}
+                <Badge variant={member.role === "owner" ? "default" : "secondary"}>
+                  {member.role === "owner" && <Crown className="mr-1 h-3 w-3" />}
+                  {t(`settings.roles.${member.role}`)}
+                </Badge>
+                {isOwner && member.role !== "owner" && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setConfirmAction({ kind: "transfer", member })}
+                    >
+                      <Crown className="mr-1 h-3.5 w-3.5" />
+                      {t("settings.transferOwnership")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-destructive"
+                      title={t("settings.removeMember")}
+                      onClick={() => setConfirmAction({ kind: "remove", member })}
+                    >
+                      <UserMinus className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      {isOwner && (invitations.data?.length ?? 0) > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t("settings.pendingInvites")}</CardTitle>
+            <CardDescription>{t("settings.pendingInvitesDesc")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {invitations.data?.map((invitation) => (
+              <div
+                key={invitation.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3"
+              >
+                <div>
+                  <p className="text-sm font-medium">{invitation.email}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t("settings.expires", { date: formatDate(invitation.expires_at) })}
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openInvite(invitation.email)}
+                  >
+                    <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                    {t("settings.resendInvite")}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive"
+                    title={t("settings.revokeInvite")}
+                    disabled={revoke.isPending}
+                    onClick={() => revoke.mutate(invitation.id)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      <Dialog
+        open={inviteOpen}
+        onOpenChange={(open) => {
+          setInviteOpen(open);
+          if (!open) setInviteLink("");
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("settings.inviteMember")}</DialogTitle>
+            <DialogDescription>{t("settings.inviteDesc")}</DialogDescription>
+          </DialogHeader>
+          {inviteLink ? (
+            <div className="space-y-3">
+              <Label htmlFor="invite-link">{t("settings.inviteLink")}</Label>
+              <div className="flex gap-2">
+                <Input id="invite-link" value={inviteLink} readOnly />
+                <Button size="icon" onClick={() => copyInvite(inviteLink)}>
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">{t("settings.inviteLinkHint")}</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor="invite-email">{t("auth.email")}</Label>
+              <Input
+                id="invite-email"
+                type="email"
+                autoComplete="email"
+                value={inviteEmail}
+                onChange={(event) => setInviteEmail(event.target.value)}
+                placeholder="name@example.com"
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setInviteOpen(false)}>
+              {inviteLink ? t("common.close") : t("common.cancel")}
+            </Button>
+            {!inviteLink && (
+              <Button
+                disabled={!inviteEmail.trim() || invite.isPending}
+                onClick={() => invite.mutate(inviteEmail.trim())}
+              >
+                {invite.isPending ? t("common.loading") : t("settings.createInvite")}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(confirmAction)} onOpenChange={(open) => !open && setConfirmAction(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {confirmAction?.kind === "transfer"
+                ? t("settings.transferTitle")
+                : t("settings.removeTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmAction?.kind === "transfer"
+                ? t("settings.transferDesc", { name: confirmAction.member.full_name })
+                : t("settings.removeDesc", { name: confirmAction?.member.full_name })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setConfirmAction(null)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant={confirmAction?.kind === "remove" ? "destructive" : "default"}
+              disabled={remove.isPending || transfer.isPending}
+              onClick={() => {
+                if (!confirmAction) return;
+                if (confirmAction.kind === "transfer") {
+                  transfer.mutate(confirmAction.member.user_id);
+                } else {
+                  remove.mutate(confirmAction.member.user_id);
+                }
+              }}
+            >
+              {t("common.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
@@ -852,25 +1113,47 @@ function StatusForm({
 
 export default function SettingsPage() {
   const { t } = useTranslation();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const me = useQuery({ queryKey: ["me"], queryFn: api.auth.me });
+
+  if (me.isPending) return <Skeleton className="h-72" />;
+
+  const isOwner = me.data?.role === "owner";
+  const allowedTabs = isOwner
+    ? ["bot", "company", "statuses", "team", "notifications"]
+    : ["statuses", "team", "notifications"];
+  const requestedTab = searchParams.get("tab");
+  const activeTab = requestedTab && allowedTabs.includes(requestedTab)
+    ? requestedTab
+    : isOwner
+      ? "bot"
+      : "statuses";
 
   return (
     <>
       <PageHeader title={t("settings.title")} />
-      <Tabs defaultValue="bot">
+      <Tabs
+        value={activeTab}
+        onValueChange={(tab) => setSearchParams(tab === (isOwner ? "bot" : "statuses") ? {} : { tab })}
+      >
         <TabsList className="flex-wrap">
-          <TabsTrigger value="bot">{t("settings.tabBot")}</TabsTrigger>
-          <TabsTrigger value="company">{t("settings.tabCompany")}</TabsTrigger>
+          {isOwner && <TabsTrigger value="bot">{t("settings.tabBot")}</TabsTrigger>}
+          {isOwner && <TabsTrigger value="company">{t("settings.tabCompany")}</TabsTrigger>}
           <TabsTrigger value="statuses">{t("settings.tabStatuses")}</TabsTrigger>
           <TabsTrigger value="team">{t("settings.tabTeam")}</TabsTrigger>
           <TabsTrigger value="notifications">{t("settings.tabNotifications")}</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="bot">
-          <BotTab />
-        </TabsContent>
-        <TabsContent value="company">
-          <CompanyTab />
-        </TabsContent>
+        {isOwner && (
+          <TabsContent value="bot">
+            <BotTab />
+          </TabsContent>
+        )}
+        {isOwner && (
+          <TabsContent value="company">
+            <CompanyTab />
+          </TabsContent>
+        )}
         <TabsContent value="statuses">
           <StatusesTab />
         </TabsContent>

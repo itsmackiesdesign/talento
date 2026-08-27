@@ -61,6 +61,43 @@ async def _process(bot_id: uuid.UUID, payload: dict) -> None:
         await redis.aclose()
 
 
+def platform_webhook_secret() -> str:
+    """Derived from the platform token so it needs no extra env var, but never *is* the token."""
+    import hashlib
+
+    return hashlib.sha256(
+        f"{settings.PLATFORM_BOT_TOKEN}{settings.JWT_SECRET}".encode()
+    ).hexdigest()[:32]
+
+
+async def _process_platform_update(payload: dict) -> None:
+    from app.api.notifications import handle_platform_update
+
+    try:
+        await handle_platform_update(payload)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("platform_update_failed", error=str(exc))
+
+
+# Keep this static route before /webhook/{bot_id}/{secret}. Otherwise Starlette matches
+# "platform" as bot_id first and FastAPI rejects it as a non-UUID with HTTP 422.
+@router.post("/webhook/platform/{secret}", status_code=status.HTTP_200_OK)
+async def platform_webhook(secret: str, request: Request, background: BackgroundTasks) -> dict:
+    """Service bot used for HR notifications and the ``/link {code}`` flow (spec §3.1)."""
+    if not settings.PLATFORM_BOT_TOKEN:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Platform bot is not configured")
+    if not secrets.compare_digest(secret, platform_webhook_secret()):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid webhook secret")
+
+    try:
+        payload = await request.json()
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed update") from None
+
+    background.add_task(_process_platform_update, payload)
+    return {"ok": True}
+
+
 @router.post("/webhook/{bot_id}/{secret}", status_code=status.HTTP_200_OK)
 async def telegram_webhook(
     bot_id: uuid.UUID,
@@ -106,38 +143,3 @@ async def telegram_webhook(
 
     background.add_task(_process, bot_id, payload)
     return {"ok": True}
-
-
-@router.post("/webhook/platform/{secret}", status_code=status.HTTP_200_OK)
-async def platform_webhook(secret: str, request: Request, background: BackgroundTasks) -> dict:
-    """Service bot used for HR notifications and the ``/link {code}`` flow (spec §3.1)."""
-    if not settings.PLATFORM_BOT_TOKEN:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Platform bot is not configured")
-    if not secrets.compare_digest(secret, platform_webhook_secret()):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Invalid webhook secret")
-
-    try:
-        payload = await request.json()
-    except Exception:  # noqa: BLE001
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed update") from None
-
-    background.add_task(_process_platform_update, payload)
-    return {"ok": True}
-
-
-def platform_webhook_secret() -> str:
-    """Derived from the platform token so it needs no extra env var, but never *is* the token."""
-    import hashlib
-
-    return hashlib.sha256(
-        f"{settings.PLATFORM_BOT_TOKEN}{settings.JWT_SECRET}".encode()
-    ).hexdigest()[:32]
-
-
-async def _process_platform_update(payload: dict) -> None:
-    from app.api.notifications import handle_platform_update
-
-    try:
-        await handle_platform_update(payload)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("platform_update_failed", error=str(exc))

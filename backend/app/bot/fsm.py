@@ -39,6 +39,7 @@ class QuestionSnapshot:
     options: list[str] | None = None
     is_required: bool = True
     validation: dict[str, Any] | None = None
+    profile_field: str | None = None
     base_text: str | None = None
     base_options: list[str] | None = None
 

@@ -15,6 +15,7 @@ export const LANGUAGE_LABELS: Record<string, string> = {
 /** {lang: {field: value}} — mirrors app/core/i18n.py. */
 export type Translations = Record<string, Record<string, string | string[]>>;
 export type VacancyStatus = "draft" | "active" | "archived";
+export type BillingMode = "unlimited" | "pay_per_application";
 export type QuestionType =
   | "short_text"
   | "long_text"
@@ -26,6 +27,7 @@ export type QuestionType =
   | "datetime";
 
 export type DatetimeMask = "date" | "datetime" | "time";
+export type QuestionProfileField = "candidate_name" | "candidate_photo";
 
 export const QUESTION_TYPES: QuestionType[] = [
   "short_text",
@@ -49,6 +51,7 @@ export interface User {
   email: string;
   full_name: string;
   telegram_user_id: number | null;
+  is_platform_admin: boolean;
   created_at: string;
 }
 
@@ -60,7 +63,12 @@ export interface Company {
   default_language: Language;
   enabled_languages: Language[];
   branches_enabled: boolean;
-  plan: string;
+  billing_mode: BillingMode;
+  balance_uzs: number;
+  application_price_uzs: number;
+  is_suspended: boolean;
+  suspension_reason: string | null;
+  suspended_at: string | null;
   created_at: string;
 }
 
@@ -76,6 +84,31 @@ export interface TeamMember {
   full_name: string;
   role: string;
   telegram_linked: boolean;
+  joined_at: string;
+}
+
+export interface TeamInvitation {
+  id: string;
+  email: string;
+  role: "member";
+  expires_at: string;
+  created_at: string;
+}
+
+export interface TeamInvitationCreated extends TeamInvitation {
+  invite_url: string;
+}
+
+export interface TeamInvitationPreview {
+  company_name: string;
+  email: string;
+  expires_at: string;
+}
+
+export interface TeamInvitationAccepted {
+  company_id: string;
+  company_name: string;
+  role: "member";
 }
 
 export interface Bot {
@@ -159,6 +192,8 @@ export interface Question {
   type: QuestionType;
   options: string[] | null;
   is_required: boolean;
+  is_filterable: boolean;
+  profile_field: QuestionProfileField | null;
   validation: { min?: number; max?: number; mask?: DatetimeMask } | null;
   translations: Translations;
   sort_order: number;
@@ -193,6 +228,7 @@ export interface ApplicationListItem {
   branch_id: string | null;
   branch_name: string | null;
   candidate_name: string;
+  candidate_photo_url: string | null;
   candidate_username: string | null;
   candidate_phone: string | null;
 }
@@ -249,4 +285,90 @@ export interface LinkCode {
 export interface FilterOptions {
   vacancies: { id: string; title: string }[];
   branches: { id: string; name: string }[];
+}
+
+export interface AdminStats {
+  companies_total: number;
+  companies_active: number;
+  companies_suspended: number;
+  users_total: number;
+  bots_active: number;
+  applications_total: number;
+}
+
+export interface AdminCompanyItem {
+  id: string;
+  name: string;
+  slug: string;
+  billing_mode: BillingMode;
+  balance_uzs: number;
+  application_price_uzs: number;
+  is_suspended: boolean;
+  suspension_reason: string | null;
+  owner_email: string | null;
+  bot_username: string | null;
+  members_count: number;
+  vacancies_count: number;
+  applications_count: number;
+  created_at: string;
+}
+
+export interface AdminCompanyPage {
+  items: AdminCompanyItem[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface AdminAuditItem {
+  id: string;
+  actor_email: string;
+  target_company_id: string | null;
+  target_company_name: string | null;
+  action: string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AdminCompanyMember {
+  user_id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  created_at: string;
+}
+
+export interface AdminCompanyDetail extends AdminCompanyItem {
+  logo_url: string | null;
+  default_language: string;
+  enabled_languages: string[];
+  branches_count: number;
+  members: AdminCompanyMember[];
+  recent_audit: AdminAuditItem[];
+}
+
+export interface BillingSummary {
+  billing_mode: BillingMode;
+  balance_uzs: number;
+  application_price_uzs: number;
+  remaining_applications: number | null;
+}
+
+export interface BalanceTransaction {
+  id: string;
+  amount_uzs: number;
+  balance_after_uzs: number;
+  kind: "signup_bonus" | "top_up" | "application_charge";
+  description: string | null;
+  application_id: string | null;
+  vacancy_title: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
+export interface BalanceTransactionPage {
+  items: BalanceTransaction[];
+  total: number;
+  page: number;
+  page_size: number;
 }

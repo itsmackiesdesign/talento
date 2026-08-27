@@ -26,7 +26,9 @@ async def call(token: str, method: str, **params: Any) -> Any:
         try:
             resp = await client.post(url, json={k: v for k, v in params.items() if v is not None})
         except httpx.HTTPError as exc:
-            raise TelegramError(f"Could not reach Telegram: {exc}") from exc
+            # httpx exception strings may contain the request URL, and Telegram puts the
+            # bot token inside that URL. Keep the cause for debugging without exposing it.
+            raise TelegramError("Could not reach Telegram") from exc
     try:
         body = resp.json()
     except ValueError:
@@ -69,6 +71,26 @@ async def send_message(
         text=text,
         parse_mode=parse_mode,
         disable_web_page_preview=True,
+        **kw,
+    )
+
+
+async def send_photo(
+    token: str,
+    chat_id: int,
+    photo: str,
+    caption: str,
+    parse_mode: str | None = "HTML",
+    **kw: Any,
+) -> Any:
+    """Send a photo by public URL with an optional inline keyboard."""
+    return await call(
+        token,
+        "sendPhoto",
+        chat_id=chat_id,
+        photo=photo,
+        caption=caption,
+        parse_mode=parse_mode,
         **kw,
     )
 

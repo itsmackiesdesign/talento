@@ -8,7 +8,9 @@ import {
   Menu,
   Moon,
   Settings,
+  ShieldCheck,
   Sun,
+  WalletCards,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -41,6 +43,8 @@ const NAV = [
   { to: "/settings", key: "settings", icon: Settings, end: false },
 ] as const;
 
+const money = new Intl.NumberFormat("uz-UZ");
+
 export function AppLayout({ me, children }: { me: Me; children: React.ReactNode }) {
   const { t, i18n } = useTranslation();
   const { dark, toggle } = useTheme();
@@ -71,6 +75,16 @@ export function AppLayout({ me, children }: { me: Me; children: React.ReactNode 
           {t(`nav.${key}`)}
         </NavLink>
       ))}
+      {me.user.is_platform_admin && (
+        <NavLink
+          to="/admin"
+          onClick={() => setMobileOpen(false)}
+          className="mt-3 flex items-center gap-3 rounded-lg border px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
+        >
+          <ShieldCheck className="h-4 w-4" />
+          Platform admin
+        </NavLink>
+      )}
     </nav>
   );
 
@@ -95,6 +109,34 @@ export function AppLayout({ me, children }: { me: Me; children: React.ReactNode 
       {nav}
 
       <div className="mt-auto space-y-3">
+        {company && me.role === "owner" && (
+          <NavLink
+            to="/billing"
+            onClick={() => setMobileOpen(false)}
+            aria-label={t("billing.title")}
+            className={({ isActive }) =>
+              cn(
+                "group flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/10 p-3 shadow-sm transition-colors hover:bg-primary/15",
+                isActive && "ring-1 ring-primary/50",
+              )
+            }
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/15 text-primary transition-colors group-hover:bg-primary/20">
+              <WalletCards className="h-5 w-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-xs font-medium text-primary">
+                {t("billing.balance")}
+              </span>
+              <span className="mt-0.5 block truncate text-base font-semibold tabular-nums tracking-tight">
+                {company.billing_mode === "unlimited"
+                  ? t("billing.unlimited")
+                  : `${money.format(company.balance_uzs)} UZS`}
+              </span>
+            </span>
+          </NavLink>
+        )}
+
         <div className="flex gap-1">
           {LANGUAGES.map((lang) => (
             <Button

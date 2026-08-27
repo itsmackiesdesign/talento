@@ -36,10 +36,21 @@ def _uuid_pk() -> Mapped[uuid.UUID]:
 
 
 TS = DateTime(timezone=True)
+SIGNUP_BONUS_UZS = 20_000
 
 
 class Company(Base):
     __tablename__ = "companies"
+    __table_args__ = (
+        CheckConstraint(
+            "billing_mode IN ('unlimited','pay_per_application')",
+            name="ck_company_billing_mode",
+        ),
+        CheckConstraint("balance_uzs >= 0", name="ck_company_balance_nonnegative"),
+        CheckConstraint(
+            "application_price_uzs > 0", name="ck_company_application_price_positive"
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -53,7 +64,21 @@ class Company(Base):
     )
     # Flipped on automatically when the first active branch appears; can be toggled by hand.
     branches_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    plan: Mapped[str] = mapped_column(String(20), default="free", nullable=False)
+    billing_mode: Mapped[str] = mapped_column(
+        String(30), default="pay_per_application", nullable=False
+    )
+    balance_uzs: Mapped[int] = mapped_column(
+        BigInteger, default=SIGNUP_BONUS_UZS, nullable=False
+    )
+    application_price_uzs: Mapped[int] = mapped_column(
+        BigInteger, default=2000, nullable=False
+    )
+    is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    suspension_reason: Mapped[str | None] = mapped_column(Text)
+    suspended_at: Mapped[datetime | None] = mapped_column(TS)
+    suspended_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     members: Mapped[list["CompanyMember"]] = relationship(
@@ -73,6 +98,9 @@ class User(Base):
     full_name: Mapped[str] = mapped_column(Text, nullable=False)
     # Set once the HR links their Telegram to the platform bot via /link {code}.
     telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    # Platform administrators are intentionally independent of tenant memberships/roles.
+    # The flag can only be granted through the local admin CLI or direct database access.
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     memberships: Mapped[list["CompanyMember"]] = relationship(
@@ -95,6 +123,30 @@ class CompanyMember(Base):
 
     company: Mapped[Company] = relationship(back_populates="members")
     user: Mapped[User] = relationship(back_populates="memberships")
+
+
+class TeamInvitation(Base):
+    __tablename__ = "team_invitations"
+    __table_args__ = (
+        CheckConstraint("role IN ('member')", name="ck_team_invitation_role"),
+        Index("ix_team_invitations_company_email", "company_id", "email"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(String(20), default="member", nullable=False)
+    # Only SHA-256 is persisted. Possession of the raw token grants membership, so a
+    # database read must not be enough to reconstruct an invitation URL.
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    expires_at: Mapped[datetime] = mapped_column(TS, nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(TS)
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
 
 class Bot(Base):
@@ -208,6 +260,10 @@ class Question(Base):
             "'number','phone','file','datetime')",
             name="ck_question_type",
         ),
+        CheckConstraint(
+            "profile_field IS NULL OR profile_field IN ('candidate_name','candidate_photo')",
+            name="ck_question_profile_field",
+        ),
         Index("ix_questions_company_vacancy", "company_id", "vacancy_id", "sort_order"),
     )
 
@@ -223,6 +279,10 @@ class Question(Base):
     type: Mapped[str] = mapped_column(String(20), nullable=False)
     options: Mapped[list[str] | None] = mapped_column(JSONB)
     is_required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_filterable: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    profile_field: Mapped[str | None] = mapped_column(String(30))
     validation: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     # {lang: {text, options}} — a translated options list must match the base length,
     # otherwise it is ignored so answer indexes can never misalign.
@@ -402,3 +462,61 @@ class ApplicationStatusHistory(Base):
 
     application: Mapped[Application] = relationship(back_populates="history")
     user: Mapped[User | None] = relationship()
+
+
+class AdminAuditLog(Base):
+    """Immutable record of every platform-admin mutation."""
+
+    __tablename__ = "admin_audit_logs"
+    __table_args__ = (Index("ix_admin_audit_created", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id"), nullable=False
+    )
+    target_company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("companies.id", ondelete="SET NULL")
+    )
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+    actor: Mapped[User] = relationship()
+    target_company: Mapped[Company | None] = relationship(foreign_keys=[target_company_id])
+
+
+class BalanceTransaction(Base):
+    """Append-only UZS ledger for tenant balance changes."""
+
+    __tablename__ = "balance_transactions"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('signup_bonus','top_up','application_charge')",
+            name="ck_balance_transaction_kind",
+        ),
+        CheckConstraint("amount_uzs <> 0", name="ck_balance_transaction_nonzero"),
+        CheckConstraint(
+            "balance_after_uzs >= 0", name="ck_balance_after_nonnegative"
+        ),
+        Index("ix_balance_transactions_company_created", "company_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    amount_uzs: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    balance_after_uzs: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    application_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("applications.id", ondelete="SET NULL"), unique=True
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+    company: Mapped[Company] = relationship()
+    application: Mapped[Application | None] = relationship()
+    created_by: Mapped[User | None] = relationship()

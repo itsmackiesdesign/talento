@@ -2,7 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -21,18 +21,33 @@ const schema = z.object({
 export default function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const setTokens = useAuth((s) => s.setTokens);
+  const routeState = location.state as {
+    from?: { pathname?: string; search?: string };
+    email?: string;
+  } | null;
 
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    defaultValues: { email: "", password: "" },
+    defaultValues: { email: routeState?.email ?? "", password: "" },
   });
 
   const mutation = useMutation({
     mutationFn: api.auth.login,
-    onSuccess: (tokens) => {
+    onSuccess: async (tokens) => {
       setTokens(tokens.access_token, tokens.refresh_token);
-      navigate("/");
+      const from = routeState?.from;
+      if (from?.pathname) {
+        navigate(`${from.pathname}${from.search ?? ""}`);
+        return;
+      }
+      try {
+        const me = await api.auth.me();
+        navigate(me.user.is_platform_admin ? "/admin" : "/");
+      } catch {
+        navigate("/");
+      }
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -74,7 +89,11 @@ export default function LoginPage() {
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
             {t("auth.noAccount")}{" "}
-            <Link to="/register" className="text-primary hover:underline">
+            <Link
+              to="/register"
+              state={location.state}
+              className="text-primary hover:underline"
+            >
               {t("auth.register")}
             </Link>
           </p>

@@ -1,6 +1,9 @@
 """Celery application. Broker and result backend both live in Redis."""
 
+import logging
+
 from celery import Celery
+from celery.signals import after_setup_logger, after_setup_task_logger
 
 from app.core.config import settings
 
@@ -23,3 +26,13 @@ celery_app.conf.update(
     task_soft_time_limit=240,
     broker_connection_retry_on_startup=True,
 )
+
+
+def _suppress_credential_bearing_transport_logs(**_kwargs) -> None:
+    """httpx INFO messages include the Telegram Bot API URL, which embeds its token."""
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+after_setup_logger.connect(_suppress_credential_bearing_transport_logs)
+after_setup_task_logger.connect(_suppress_credential_bearing_transport_logs)

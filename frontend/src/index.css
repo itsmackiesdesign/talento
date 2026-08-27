@@ -62,3 +62,9 @@
 .table-scroll {
   @apply w-full overflow-x-auto;
 }
+
+/* MarkdownField's editing surface — min-height mirrors the old field's `rows` prop, set as a
+   CSS variable per instance since Tailwind can't see a runtime-computed arbitrary value. */
+.mf-editable {
+  min-height: var(--mf-min-h, 7rem);
+}

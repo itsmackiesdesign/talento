@@ -206,6 +206,8 @@ async def duplicate_vacancy(
                 type=q.type,
                 options=q.options,
                 is_required=q.is_required,
+                is_filterable=q.is_filterable,
+                profile_field=q.profile_field,
                 validation=q.validation,
                 translations=dict(q.translations or {}),
                 sort_order=q.sort_order,

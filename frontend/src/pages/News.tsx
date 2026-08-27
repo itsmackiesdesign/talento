@@ -23,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { EmptyState, Label, Skeleton, Switch } from "@/components/ui/misc";
 import { api } from "@/lib/api";
+import { markdownToPreviewHtml } from "@/lib/markdown";
 import type { NewsItem } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -150,7 +151,12 @@ export default function NewsPage() {
                 </div>
                 <p className="truncate text-xs text-muted-foreground">
                   {formatDate(item.created_at)}
-                  {item.content ? ` · ${item.content}` : ""}
+                  {item.content && (
+                    <>
+                      {" · "}
+                      <span dangerouslySetInnerHTML={{ __html: markdownToPreviewHtml(item.content) }} />
+                    </>
+                  )}
                 </p>
               </div>
 

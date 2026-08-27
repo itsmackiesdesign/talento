@@ -45,6 +45,16 @@ async def get_current_user(
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
+async def require_platform_admin(user: CurrentUser) -> User:
+    """Authorize global administration without consulting tenant memberships."""
+    if not user.is_platform_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Platform administrator access required")
+    return user
+
+
+CurrentPlatformAdmin = Annotated[User, Depends(require_platform_admin)]
+
+
 async def get_current_membership(
     user: CurrentUser,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -89,6 +99,11 @@ async def get_current_company(
     company = await db.get(Company, membership.company_id)
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    if company.is_suspended:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "This company is suspended. Contact the platform administrator.",
+        )
     return company
 
 

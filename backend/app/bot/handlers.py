@@ -51,7 +51,13 @@ from app.models import (
     Vacancy,
 )
 from app.services import telegram as tg
-from app.services.storage import save_candidate_file
+from app.services.billing import (
+    InsufficientBalanceError,
+    can_accept_application,
+    charge_application,
+    lock_billable_company,
+)
+from app.services.storage import save_candidate_file, sniff_image
 
 router = Router(name="candidate")
 log = get_logger(__name__)
@@ -548,7 +554,7 @@ async def _ask_current(
     if question.type == "datetime":
         # The mask is invisible otherwise — without this hint a candidate has no way to
         # know whether "8/2/99" is an acceptable answer, so every attempt would fail the
-        # regex before they ever see MM.DD.YYYY spelled out.
+        # regex before they ever see DD.MM.YYYY spelled out.
         mask = (question.validation or {}).get("mask", "date")
         hint = t(
             lang,
@@ -655,6 +661,17 @@ async def _start_application(
         )
         return
 
+    if not await can_accept_application(db, ctx.company_id):
+        await _send_menu(
+            message,
+            redis,
+            ctx,
+            tg_user_id,
+            t(lang, "applications_unavailable"),
+            _main_menu(ctx, lang),
+        )
+        return
+
     # Questions are snapshotted in the language the candidate is using right now. Switching
     # language mid-form would be confusing, so the snapshot keeps the form coherent even if
     # they change it afterwards.
@@ -681,6 +698,21 @@ async def _create_application(
     answers: dict,
     tg_user,
 ) -> None:
+    try:
+        billing_company = await lock_billable_company(db, ctx.company_id)
+    except InsufficientBalanceError:
+        await db.rollback()
+        await fsm.clear(redis, ctx.bot_id, tg_user.id)
+        await _send_menu(
+            message,
+            redis,
+            ctx,
+            tg_user.id,
+            t(lang, "applications_unavailable"),
+            _main_menu(ctx, lang),
+        )
+        return
+
     candidate = await db.scalar(
         select(Candidate).where(Candidate.telegram_user_id == tg_user.id)
     )
@@ -739,6 +771,7 @@ async def _create_application(
             to_status_label=new_status.label,
         )
     )
+    charge_application(db, billing_company, application.id, vacancy.title)
     await db.commit()
     await fsm.clear(redis, ctx.bot_id, tg_user.id)
 
@@ -1169,6 +1202,18 @@ async def on_file(message: Message, ctx: BotContext, redis: Redis, lang: str) ->
         log.warning("file_download_failed", error=str(exc), bot_id=str(ctx.bot_id))
         await message.answer(t(lang, "generic_error"))
         return
+
+    if question.profile_field == "candidate_photo":
+        detected_image = sniff_image(content)
+        if detected_image is None:
+            await message.answer(t(lang, "err_profile_photo_image"))
+            return
+        # A photo sent as a Telegram document can have a misleading filename/MIME type.
+        # Normalising both from the magic bytes makes StaticFiles/S3 return an image that
+        # browsers can display reliably in the application card.
+        mime, extension = detected_image
+        stem = filename.rsplit(".", 1)[0].strip() or "candidate-photo"
+        filename = f"{stem}{extension}"
 
     url = await save_candidate_file(ctx.company_id, content, filename, mime)
     await message.answer(t(lang, "file_received"))

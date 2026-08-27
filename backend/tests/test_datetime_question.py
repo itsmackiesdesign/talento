@@ -98,21 +98,21 @@ def _q(mask: str) -> QuestionSnapshot:
 
 
 def test_date_mask_accepts_zero_padded_input():
-    assert validate_text_answer(_q("date"), "08.02.1999") == "08.02.1999"
+    assert validate_text_answer(_q("date"), "25.12.1999") == "25.12.1999"
 
 
 def test_date_mask_rejects_missing_zero_padding():
     try:
-        validate_text_answer(_q("date"), "8.2.1999")
+        validate_text_answer(_q("date"), "5.2.1999")
         raise AssertionError("expected ValidationError")
     except ValidationError as exc:
         assert exc.key == "err_datetime_format"
-        assert exc.kwargs["format"] == "MM.DD.YYYY"
+        assert exc.kwargs["format"] == "DD.MM.YYYY"
 
 
 def test_date_mask_rejects_impossible_calendar_date():
-    """29.13.1999: no month 13. Caught by strptime, not just the regex."""
-    for bad in ("13.02.1999", "02.30.1999", "02.29.1999"):  # 1999 is not a leap year
+    """01.13.1999: no month 13. Caught by strptime, not just the regex."""
+    for bad in ("32.01.1999", "30.02.1999", "29.02.1999"):  # 1999 is not a leap year
         try:
             validate_text_answer(_q("date"), bad)
             raise AssertionError(f"{bad!r} should have failed")
@@ -122,19 +122,19 @@ def test_date_mask_rejects_impossible_calendar_date():
 
 def test_datetime_mask_requires_the_time_part():
     try:
-        validate_text_answer(_q("datetime"), "08.02.1999")
+        validate_text_answer(_q("datetime"), "25.12.1999")
         raise AssertionError("expected ValidationError")
     except ValidationError as exc:
-        assert exc.kwargs["example"] == "08.02.1999 10:08"
+        assert exc.kwargs["example"] == "25.12.1999 10:08"
 
 
 def test_datetime_mask_accepts_full_value():
-    assert validate_text_answer(_q("datetime"), "08.02.1999 10:08") == "08.02.1999 10:08"
+    assert validate_text_answer(_q("datetime"), "25.12.1999 10:08") == "25.12.1999 10:08"
 
 
 def test_datetime_mask_rejects_invalid_hour():
     try:
-        validate_text_answer(_q("datetime"), "08.02.1999 25:08")
+        validate_text_answer(_q("datetime"), "25.12.1999 25:08")
         raise AssertionError("expected ValidationError")
     except ValidationError:
         pass
@@ -155,7 +155,7 @@ def test_time_mask_rejects_hour_24():
 def test_time_mask_rejects_date_shaped_input():
     """Answering a time question with a date must not be accidentally accepted."""
     try:
-        validate_text_answer(_q("time"), "08.02.1999")
+        validate_text_answer(_q("time"), "25.12.1999")
         raise AssertionError("expected ValidationError")
     except ValidationError:
         pass
@@ -164,7 +164,7 @@ def test_time_mask_rejects_date_shaped_input():
 def test_unknown_mask_falls_back_to_date():
     # Defensive: the API rejects an unknown mask before it can reach here, but a row edited
     # directly in the database should still degrade to something rather than crash the bot.
-    assert validate_text_answer(_q("nonsense"), "08.02.1999") == "08.02.1999"
+    assert validate_text_answer(_q("nonsense"), "25.12.1999") == "25.12.1999"
 
 
 # --------------------------------------------------------------------------- end to end
@@ -193,8 +193,8 @@ async def test_bot_shows_the_format_hint(bot, session, tenant):
     await tap(bot, tenant, "Бариста")
     await tap(bot, tenant, "✅ Откликнуться")
 
-    assert "MM.DD.YYYY" in session.last_text
-    assert "08.02.1999" in session.last_text
+    assert "DD.MM.YYYY" in session.last_text
+    assert "25.12.1999" in session.last_text
 
 
 async def test_bot_rejects_bad_format_and_reasks(bot, session, tenant):
@@ -206,7 +206,7 @@ async def test_bot_rejects_bad_format_and_reasks(bot, session, tenant):
 
     session.clear()
     await tap(bot, tenant, "2/8/1999")
-    assert "MM.DD.YYYY" in session.last_text
+    assert "DD.MM.YYYY" in session.last_text
 
     async with TestSession() as db:
         assert await db.scalar(select(Application)) is None
@@ -218,12 +218,12 @@ async def test_bot_accepts_valid_date_and_stores_it(bot, session, tenant):
     await tap(bot, tenant, "📋 Вакансии")
     await tap(bot, tenant, "Бариста")
     await tap(bot, tenant, "✅ Откликнуться")
-    await tap(bot, tenant, "08.02.1999")
+    await tap(bot, tenant, "25.12.1999")
     await tap(bot, tenant, "✅ Отправить")
 
     async with TestSession() as db:
         application = await db.scalar(select(Application))
-    assert application.answers[0]["answer"] == "08.02.1999"
+    assert application.answers[0]["answer"] == "25.12.1999"
 
 
 async def test_bot_accepts_valid_datetime_and_stores_it(bot, session, tenant):
@@ -232,12 +232,12 @@ async def test_bot_accepts_valid_datetime_and_stores_it(bot, session, tenant):
     await tap(bot, tenant, "📋 Вакансии")
     await tap(bot, tenant, "Бариста")
     await tap(bot, tenant, "✅ Откликнуться")
-    await tap(bot, tenant, "08.02.1999 10:08")
+    await tap(bot, tenant, "25.12.1999 10:08")
     await tap(bot, tenant, "✅ Отправить")
 
     async with TestSession() as db:
         application = await db.scalar(select(Application))
-    assert application.answers[0]["answer"] == "08.02.1999 10:08"
+    assert application.answers[0]["answer"] == "25.12.1999 10:08"
 
 
 async def test_bot_accepts_valid_time_and_stores_it(bot, session, tenant):

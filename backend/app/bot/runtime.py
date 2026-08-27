@@ -125,16 +125,23 @@ async def get_bot_auth(redis, bot_id: uuid.UUID) -> tuple[str, bool] | None:
     async with SessionLocal() as db:
         row = (
             await db.execute(
-                select(BotModel.webhook_secret, BotModel.is_active).where(BotModel.id == bot_id)
+                select(
+                    BotModel.webhook_secret,
+                    BotModel.is_active,
+                    Company.is_suspended,
+                )
+                .join(Company, Company.id == BotModel.company_id)
+                .where(BotModel.id == bot_id)
             )
         ).first()
 
-    value = "-" if row is None else f"{row[0]}|{'1' if row[1] else '0'}"
+    effective_active = bool(row and row[1] and not row[2])
+    value = "-" if row is None else f"{row[0]}|{'1' if effective_active else '0'}"
     try:
         await redis.set(key, value, ex=settings.BOT_TOKEN_CACHE_SECONDS)
     except Exception:  # noqa: BLE001
         pass
-    return None if row is None else (row[0], row[1])
+    return None if row is None else (row[0], effective_active)
 
 
 async def load_bot_context(db: AsyncSession, bot_id: uuid.UUID) -> BotContext | None:
@@ -142,7 +149,7 @@ async def load_bot_context(db: AsyncSession, bot_id: uuid.UUID) -> BotContext | 
         await db.execute(
             select(BotModel, Company)
             .join(Company, Company.id == BotModel.company_id)
-            .where(BotModel.id == bot_id)
+            .where(BotModel.id == bot_id, Company.is_suspended.is_(False))
         )
     ).first()
     if row is None:

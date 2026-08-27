@@ -3,17 +3,19 @@
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from app.api import (
+    admin,
     application_statuses,
     applications,
+    billing,
     bots,
     branches,
     companies,
@@ -78,6 +80,8 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRe
 
 api_v1 = APIRouter(prefix="/api/v1")
 api_v1.include_router(auth_api.router)
+api_v1.include_router(admin.router)
+api_v1.include_router(billing.router)
 api_v1.include_router(companies.router)
 api_v1.include_router(bots.router)
 api_v1.include_router(branches.router)
@@ -104,3 +108,29 @@ if not s3_enabled():
     upload_dir = Path(settings.LOCAL_UPLOAD_DIR)
     upload_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/files", StaticFiles(directory=str(upload_dir)), name="files")
+
+
+# When a frontend build is present, expose it from the API process as a same-origin SPA.
+# This gives local Telegram notifications a real public HTTPS panel URL through the same
+# ngrok tunnel already required for webhooks, without needing a second tunnel.
+frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if frontend_dist.is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(frontend_dist / "assets")),
+        name="frontend-assets",
+    )
+
+    @app.get("/", include_in_schema=False)
+    async def frontend_index() -> FileResponse:
+        return FileResponse(frontend_dist / "index.html")
+
+    @app.get("/{frontend_path:path}", include_in_schema=False)
+    async def frontend_spa(frontend_path: str) -> FileResponse:
+        # Reserved backend paths must keep returning an API 404, not index.html.
+        if frontend_path.startswith(("api/", "webhook/", "files/")):
+            raise HTTPException(status.HTTP_404_NOT_FOUND)
+        requested = (frontend_dist / frontend_path).resolve()
+        if requested.is_relative_to(frontend_dist) and requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(frontend_dist / "index.html")

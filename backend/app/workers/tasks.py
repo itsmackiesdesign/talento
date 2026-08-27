@@ -6,14 +6,17 @@ owns its own event loop and session — nothing is shared with the web process.
 
 import asyncio
 import uuid
+from collections.abc import Coroutine
 from html import escape
+from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import select
 
 from app.bot.texts import t
 from app.core.config import settings
 from app.core.crypto import decrypt
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, engine
 from app.core.i18n import localized, normalise
 from app.core.logging import get_logger
 from app.models import (
@@ -28,14 +31,75 @@ from app.models import (
     Vacancy,
 )
 from app.services import telegram as tg
+from app.services.candidate_profiles import resolve_candidate_profile
 from app.workers.celery_app import celery_app
 
 log = get_logger(__name__)
 
 
+async def _run_with_fresh_db(coro: Coroutine[Any, Any, str]) -> str:
+    """Run one Celery coroutine without carrying asyncpg connections to the next loop.
+
+    Celery invokes each sync task separately and every invocation below uses
+    ``asyncio.run()``, which creates a new event loop.  SQLAlchemy's async pool must be
+    emptied before that loop closes or a later task can receive a connection tied to the
+    previous loop.
+    """
+    try:
+        return await coro
+    finally:
+        await engine.dispose()
+
+
 @celery_app.task(name="talento.notify_new_application", max_retries=3, default_retry_delay=30)
 def notify_new_application(application_id: str) -> str:
-    return asyncio.run(_notify_new_application(application_id))
+    return asyncio.run(_run_with_fresh_db(_notify_new_application(application_id)))
+
+
+def _panel_button(application_id: uuid.UUID) -> dict[str, Any] | None:
+    panel_url = f'{settings.FRONTEND_URL.rstrip("/")}/applications/{application_id}'
+    parsed = urlparse(panel_url)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or hostname in {"localhost", "127.0.0.1", "::1"}:
+        log.warning("hr_notify_panel_button_skipped", reason="frontend_url_is_not_public_https")
+        return None
+    return {
+        "inline_keyboard": [[{"text": "Открыть в панели", "url": panel_url}]],
+    }
+
+
+async def _send_hr_application_notification(
+    chat_id: int,
+    text: str,
+    photo_url: str | None,
+    reply_markup: dict[str, Any] | None,
+) -> None:
+    if photo_url:
+        try:
+            await tg.send_photo(
+                settings.PLATFORM_BOT_TOKEN,
+                chat_id,
+                photo_url,
+                text,
+                reply_markup=reply_markup,
+            )
+            return
+        except tg.TelegramError as exc:
+            # A local/private storage URL may not be reachable by Telegram. The HR should
+            # still receive the application, so retry as text with the same panel button.
+            log.warning(
+                "hr_notify_photo_failed",
+                chat_id=chat_id,
+                photo_url=photo_url,
+                error=exc.description,
+            )
+
+    await tg.send_message(
+        settings.PLATFORM_BOT_TOKEN,
+        chat_id,
+        text,
+        reply_markup=reply_markup,
+    )
 
 
 async def _notify_new_application(application_id: str) -> str:
@@ -73,26 +137,28 @@ async def _notify_new_application(application_id: str) -> str:
         log.info("hr_notify_no_recipients", company_id=str(company.id))
         return "no linked recipients"
 
+    profile = resolve_candidate_profile(application.answers, candidate.first_name)
     lines = ["🔔 <b>Новая заявка</b>", ""]
     if branch is not None:
         lines.append(f"🏢 Филиал: {escape(branch.name)}")
     lines.append(f"💼 Вакансия: {escape(vacancy.title)}")
-    lines.append(f"👤 Кандидат: {escape(candidate.first_name or '—')}")
+    lines.append(f"👤 Кандидат: {escape(profile.name)}")
     if candidate.phone:
         lines.append(f"📞 Телефон: {escape(candidate.phone)}")
     if candidate.telegram_username:
         lines.append(f"✈️ Telegram: @{escape(candidate.telegram_username)}")
-    lines.append("")
-    lines.append(
-        f'<a href="{settings.FRONTEND_URL.rstrip("/")}/applications/{application.id}">'
-        f"Открыть в панели</a>"
-    )
     text = "\n".join(lines)
+    reply_markup = _panel_button(application.id)
 
     sent = 0
     for chat_id in recipients:
         try:
-            await tg.send_message(settings.PLATFORM_BOT_TOKEN, chat_id, text)
+            await _send_hr_application_notification(
+                chat_id,
+                text,
+                profile.photo_url,
+                reply_markup,
+            )
             sent += 1
         except tg.TelegramError as exc:
             # Most likely the HR blocked the bot; log and keep going for the rest of the team.
@@ -104,7 +170,9 @@ async def _notify_new_application(application_id: str) -> str:
 
 @celery_app.task(name="talento.notify_candidate_status", max_retries=3, default_retry_delay=30)
 def notify_candidate_status(application_id: str, from_status_id: str, to_status_id: str) -> str:
-    return asyncio.run(_notify_candidate_status(application_id, to_status_id))
+    return asyncio.run(
+        _run_with_fresh_db(_notify_candidate_status(application_id, to_status_id))
+    )
 
 
 async def _notify_candidate_status(application_id: str, to_status_id: str) -> str:

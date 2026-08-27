@@ -133,6 +133,8 @@ async def branch_tenant():
         company = Company(
             name="Acme",
             slug=f"acme-{uuid.uuid4().hex[:6]}",
+            billing_mode="unlimited",
+            balance_uzs=0,
             branches_enabled=True,
             enabled_languages=["ru"],
         )

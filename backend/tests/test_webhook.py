@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 
+from app.api import webhook as webhook_api
 from app.core.crypto import decrypt, encrypt, mask_token
 from app.models import Bot as BotModel
 from tests.conftest import TestSession, make_company
@@ -171,6 +172,20 @@ async def test_webhook_accepts_valid_request(client):
     )
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
+
+
+async def test_platform_webhook_is_not_captured_by_tenant_uuid_route(client, monkeypatch):
+    handler = AsyncMock()
+    monkeypatch.setattr(webhook_api.settings, "PLATFORM_BOT_TOKEN", TOKEN)
+    monkeypatch.setattr(webhook_api, "_process_platform_update", handler)
+    secret = webhook_api.platform_webhook_secret()
+    payload = {"update_id": 1, "message": {"text": "/start"}}
+
+    resp = await client.post(f"/webhook/platform/{secret}", json=payload)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"ok": True}
+    handler.assert_awaited_once_with(payload)
 
 
 async def test_inactive_bot_skips_processing(client):

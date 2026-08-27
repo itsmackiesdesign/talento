@@ -33,6 +33,7 @@ from app.schemas import (
     StatusHistoryOut,
     StatusUpdate,
 )
+from app.services.candidate_profiles import resolve_candidate_profile
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 log = get_logger(__name__)
@@ -146,6 +147,16 @@ def _apply_filters(
                 Candidate.first_name.ilike(pattern),
                 Candidate.telegram_username.ilike(pattern),
                 Candidate.phone.ilike(pattern),
+                text(
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM jsonb_array_elements(applications.answers) AS profile_answer
+                        WHERE profile_answer->>'profile_field' = 'candidate_name'
+                          AND profile_answer->>'answer' ILIKE :candidate_name_pattern
+                    )
+                    """
+                ).bindparams(candidate_name_pattern=pattern),
             )
         )
     return _apply_answer_filters(stmt, answers_filter)
@@ -158,6 +169,8 @@ def _to_item(
     branch: Branch | None,
     app_status: ApplicationStatus,
 ):
+    profile = resolve_candidate_profile(app.answers, cand.first_name)
+
     return ApplicationListItem(
         id=app.id,
         status_id=app_status.id,
@@ -166,7 +179,8 @@ def _to_item(
         vacancy_title=vacancy.title,
         branch_id=branch.id if branch else None,
         branch_name=branch.name if branch else None,
-        candidate_name=cand.first_name or "—",
+        candidate_name=profile.name,
+        candidate_photo_url=profile.photo_url,
         candidate_username=cand.telegram_username,
         candidate_phone=cand.phone,
     )

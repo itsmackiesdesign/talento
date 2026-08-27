@@ -23,19 +23,19 @@ _PHONE_VALID = re.compile(r"^\+?[1-9]\d{7,14}$")
 
 # mask -> (strict input pattern, strptime/strftime format, format spec, example).
 #
-# The format spec ("MM.DD.YYYY") is shown to the candidate as-is in every language — like a
+# The format spec ("DD.MM.YYYY") is shown to the candidate as-is in every language — like a
 # date picker's placeholder text, it is a technical token rather than a sentence, so only the
 # surrounding sentence in texts.py is translated, not "MM"/"DD"/"YYYY" themselves.
 #
-# The regex is checked before strptime so "8.2.1999" (missing zero-padding) is rejected with
-# the same clear error as "13.45.1999" — strptime alone would silently accept the former.
+# The regex is checked before strptime so "5.2.1999" (missing zero-padding) is rejected with
+# the same clear error as "45.13.1999" — strptime alone would silently accept the former.
 _DATETIME_MASKS: dict[str, tuple[re.Pattern, str, str, str]] = {
-    "date": (re.compile(r"^\d{2}\.\d{2}\.\d{4}$"), "%m.%d.%Y", "MM.DD.YYYY", "08.02.1999"),
+    "date": (re.compile(r"^\d{2}\.\d{2}\.\d{4}$"), "%d.%m.%Y", "DD.MM.YYYY", "25.12.1999"),
     "datetime": (
         re.compile(r"^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}$"),
-        "%m.%d.%Y %H:%M",
-        "MM.DD.YYYY HH:mm",
-        "08.02.1999 10:08",
+        "%d.%m.%Y %H:%M",
+        "DD.MM.YYYY HH:mm",
+        "25.12.1999 10:08",
     ),
     "time": (re.compile(r"^\d{2}:\d{2}$"), "%H:%M", "HH:mm", "10:08"),
 }
@@ -86,6 +86,7 @@ async def collect_questions(
             options=localized_options(q, lang),
             is_required=q.is_required,
             validation=q.validation,
+            profile_field=q.profile_field,
             base_text=q.text,
             base_options=q.options,
         )
@@ -145,7 +146,7 @@ def validate_text_answer(question: QuestionSnapshot, raw: str) -> str:
         # strptime is asked to catch calendar mistakes (day 32, month 13, hour 25) — one
         # error message either way, but the two failure modes are genuinely different bugs
         # a candidate might make, so both are checked rather than relying on strptime alone
-        # (which would silently accept "8.2.1999" as if it were "08.02.1999").
+        # (which would silently accept "5.2.1999" as if it were "05.02.1999").
         if not pattern.match(value):
             raise ValidationError("err_datetime_format", format=spec, example=example)
         try:
@@ -159,7 +160,7 @@ def validate_text_answer(question: QuestionSnapshot, raw: str) -> str:
 
 
 def datetime_format_spec(mask: str) -> str:
-    """The technical format token shown as a hint under the question ("MM.DD.YYYY")."""
+    """The technical format token shown as a hint under the question ("DD.MM.YYYY")."""
     return _DATETIME_MASKS.get(mask, _DATETIME_MASKS["date"])[2]
 
 
@@ -249,6 +250,12 @@ def build_answers_payload(questions: list[QuestionSnapshot], answers: dict) -> l
                 "type": q.type,
                 "answer": None if stored.get("skipped") else stored.get("value"),
                 "skipped": bool(stored.get("skipped")),
+                "profile_field": q.profile_field,
+                "file_url": (
+                    stored.get("raw")
+                    if q.profile_field == "candidate_photo" and not stored.get("skipped")
+                    else None
+                ),
             }
         )
     return payload

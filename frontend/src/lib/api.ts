@@ -8,6 +8,13 @@
 
 import { useAuth } from "@/store/auth";
 import type {
+  AdminAuditItem,
+  AdminCompanyDetail,
+  AdminCompanyPage,
+  AdminStats,
+  BalanceTransaction,
+  BalanceTransactionPage,
+  BillingSummary,
   ApplicationDetail,
   ApplicationPage,
   ApplicationStatusOut,
@@ -22,6 +29,10 @@ import type {
   NewsItem,
   Question,
   TeamMember,
+  TeamInvitation,
+  TeamInvitationAccepted,
+  TeamInvitationCreated,
+  TeamInvitationPreview,
   TokenPair,
   Translations,
   Vacancy,
@@ -154,6 +165,39 @@ export const api = {
     me: () => get<Me>("/auth/me"),
   },
 
+  admin: {
+    stats: () => get<AdminStats>("/admin/stats"),
+    companies: (params: {
+      q?: string;
+      tenant_status?: "all" | "active" | "suspended";
+      page?: number;
+      page_size?: number;
+    }) => get<AdminCompanyPage>(`/admin/companies${qs(params)}`),
+    company: (id: string) => get<AdminCompanyDetail>(`/admin/companies/${id}`),
+    updateCompany: (
+      id: string,
+      data: {
+        billing_mode?: "unlimited" | "pay_per_application";
+        application_price_uzs?: number;
+        is_suspended?: boolean;
+        suspension_reason?: string | null;
+      },
+    ) => patch<AdminCompanyDetail>(`/admin/companies/${id}`, data),
+    topUpBalance: (id: string, data: { amount_uzs: number; description?: string }) =>
+      post<BalanceTransaction>(`/admin/companies/${id}/balance/top-up`, data),
+    balanceTransactions: (id: string, page = 1) =>
+      get<BalanceTransactionPage>(
+        `/admin/companies/${id}/billing/transactions${qs({ page, page_size: 25 })}`,
+      ),
+    audit: (limit = 50) => get<AdminAuditItem[]>(`/admin/audit${qs({ limit })}`),
+  },
+
+  billing: {
+    summary: () => get<BillingSummary>("/billing/summary"),
+    transactions: (page = 1) =>
+      get<BalanceTransactionPage>(`/billing/transactions${qs({ page, page_size: 25 })}`),
+  },
+
   company: {
     create: (data: { name: string; default_language?: string }) =>
       post<Company>("/companies", data),
@@ -162,6 +206,20 @@ export const api = {
     setLanguages: (enabled_languages: string[]) =>
       patch<Company>("/company", { enabled_languages }),
     team: () => get<TeamMember[]>("/company/team"),
+    invitations: () => get<TeamInvitation[]>("/company/team/invitations"),
+    invite: (email: string) =>
+      post<TeamInvitationCreated>("/company/team/invitations", { email }),
+    revokeInvitation: (id: string) => del<void>(`/company/team/invitations/${id}`),
+    removeMember: (userId: string) => del<void>(`/company/team/${userId}`),
+    transferOwnership: (userId: string) =>
+      post<TeamMember[]>(`/company/team/${userId}/transfer-ownership`),
+  },
+
+  invitations: {
+    preview: (token: string) =>
+      get<TeamInvitationPreview>(`/team/invitations/${encodeURIComponent(token)}`),
+    accept: (token: string) =>
+      post<TeamInvitationAccepted>(`/team/invitations/${encodeURIComponent(token)}/accept`),
   },
 
   bot: {
@@ -200,6 +258,8 @@ export const api = {
     create: (data: Partial<Question>) => post<Question>("/questions", data),
     update: (id: string, data: Partial<Question>) => patch<Question>(`/questions/${id}`, data),
     remove: (id: string) => del<void>(`/questions/${id}`),
+    copy: (id: string, vacancyId: string | null) =>
+      post<Question>(`/questions/${id}/copy`, { vacancy_id: vacancyId }),
     reorder: (ids: string[]) => post<void>("/questions/reorder", { ids }),
   },
 

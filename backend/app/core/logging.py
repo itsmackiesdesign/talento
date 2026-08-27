@@ -23,6 +23,11 @@ def configure_logging() -> None:
     logging.basicConfig(
         format="%(message)s", stream=sys.stdout, level=getattr(logging, settings.LOG_LEVEL, 20)
     )
+    # httpx logs the full Telegram Bot API URL at INFO level. That URL contains the bot
+    # token, so keep transport logs at WARNING and let our redacted service logs describe
+    # failures instead.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     renderer = (
         structlog.dev.ConsoleRenderer()
         if settings.ENV == "dev"

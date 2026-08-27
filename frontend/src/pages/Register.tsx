@@ -2,7 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -22,18 +22,24 @@ const schema = z.object({
 export default function RegisterPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const setTokens = useAuth((s) => s.setTokens);
+  const routeState = location.state as {
+    from?: { pathname?: string; search?: string };
+    email?: string;
+  } | null;
 
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    defaultValues: { full_name: "", email: "", password: "" },
+    defaultValues: { full_name: "", email: routeState?.email ?? "", password: "" },
   });
 
   const mutation = useMutation({
     mutationFn: api.auth.register,
     onSuccess: (tokens) => {
       setTokens(tokens.access_token, tokens.refresh_token);
-      navigate("/onboarding");
+      const from = routeState?.from;
+      navigate(from?.pathname ? `${from.pathname}${from.search ?? ""}` : "/onboarding");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -84,7 +90,7 @@ export default function RegisterPage() {
 
           <p className="mt-4 text-center text-sm text-muted-foreground">
             {t("auth.hasAccount")}{" "}
-            <Link to="/login" className="text-primary hover:underline">
+            <Link to="/login" state={location.state} className="text-primary hover:underline">
               {t("auth.login")}
             </Link>
           </p>

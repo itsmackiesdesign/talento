@@ -95,7 +95,7 @@ async def connect_bot(
 
 
 @router.get("", response_model=BotOut)
-async def get_bot(company: CurrentCompany, db: DB) -> BotOut:
+async def get_bot(company: CurrentCompany, _: OwnerMembership, db: DB) -> BotOut:
     bot = await db.scalar(select(Bot).where(Bot.company_id == company.id))
     if bot is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No bot connected yet")
@@ -103,7 +103,7 @@ async def get_bot(company: CurrentCompany, db: DB) -> BotOut:
 
 
 @router.get("/webhook-status")
-async def webhook_status(company: CurrentCompany, db: DB) -> dict:
+async def webhook_status(company: CurrentCompany, _: OwnerMembership, db: DB) -> dict:
     """Surfaced in Settings → Bot so the user can see Telegram's own view of the webhook."""
     bot = await db.scalar(select(Bot).where(Bot.company_id == company.id))
     if bot is None:

@@ -13,6 +13,8 @@ QuestionType = Literal[
     "datetime",
 ]
 DatetimeMask = Literal["date", "datetime", "time"]
+QuestionProfileField = Literal["candidate_name", "candidate_photo"]
+BillingMode = Literal["unlimited", "pay_per_application"]
 
 
 class ORMModel(BaseModel):
@@ -52,6 +54,7 @@ class UserOut(ORMModel):
     email: EmailStr
     full_name: str
     telegram_user_id: int | None = None
+    is_platform_admin: bool = False
     created_at: datetime
 
 
@@ -104,7 +107,12 @@ class CompanyOut(ORMModel):
     default_language: str
     enabled_languages: list[str]
     branches_enabled: bool
-    plan: str
+    billing_mode: BillingMode
+    balance_uzs: int
+    application_price_uzs: int
+    is_suspended: bool
+    suspension_reason: str | None
+    suspended_at: datetime | None
     created_at: datetime
 
 
@@ -114,6 +122,142 @@ class TeamMemberOut(BaseModel):
     full_name: str
     role: str
     telegram_linked: bool
+    joined_at: datetime
+
+
+class TeamInvitationCreate(BaseModel):
+    email: EmailStr
+
+
+class TeamInvitationOut(BaseModel):
+    id: uuid.UUID
+    email: EmailStr
+    role: Literal["member"]
+    expires_at: datetime
+    created_at: datetime
+
+
+class TeamInvitationCreatedOut(TeamInvitationOut):
+    invite_url: str
+
+
+class TeamInvitationPreviewOut(BaseModel):
+    company_name: str
+    email: EmailStr
+    expires_at: datetime
+
+
+class TeamInvitationAcceptOut(BaseModel):
+    company_id: uuid.UUID
+    company_name: str
+    role: Literal["member"]
+
+
+# --------------------------------------------------------------------------- platform admin
+
+
+class AdminStatsOut(BaseModel):
+    companies_total: int
+    companies_active: int
+    companies_suspended: int
+    users_total: int
+    bots_active: int
+    applications_total: int
+
+
+class AdminCompanyItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    slug: str
+    billing_mode: BillingMode
+    balance_uzs: int
+    application_price_uzs: int
+    is_suspended: bool
+    suspension_reason: str | None
+    owner_email: EmailStr | None
+    bot_username: str | None
+    members_count: int
+    vacancies_count: int
+    applications_count: int
+    created_at: datetime
+
+
+class AdminCompanyPage(BaseModel):
+    items: list[AdminCompanyItem]
+    total: int
+    page: int
+    page_size: int
+
+
+class AdminCompanyMemberOut(BaseModel):
+    user_id: uuid.UUID
+    email: EmailStr
+    full_name: str
+    role: str
+    created_at: datetime
+
+
+class AdminAuditOut(BaseModel):
+    id: uuid.UUID
+    actor_email: EmailStr
+    target_company_id: uuid.UUID | None
+    target_company_name: str | None
+    action: str
+    details: dict[str, Any]
+    created_at: datetime
+
+
+class AdminCompanyDetail(AdminCompanyItem):
+    logo_url: str | None
+    default_language: str
+    enabled_languages: list[str]
+    branches_count: int
+    members: list[AdminCompanyMemberOut]
+    recent_audit: list[AdminAuditOut]
+
+
+class AdminCompanyUpdate(BaseModel):
+    billing_mode: BillingMode | None = None
+    application_price_uzs: Annotated[int | None, Field(ge=1, le=1_000_000_000)] = None
+    is_suspended: bool | None = None
+    suspension_reason: Annotated[str | None, Field(max_length=500)] = None
+
+    @model_validator(mode="after")
+    def suspension_requires_reason(self):
+        if self.is_suspended is True and not (self.suspension_reason or "").strip():
+            raise ValueError("A suspension reason is required")
+        return self
+
+
+class BalanceTopUpRequest(BaseModel):
+    amount_uzs: Annotated[int, Field(ge=1, le=10_000_000_000)]
+    description: Annotated[str | None, Field(max_length=500)] = None
+
+
+class BalanceTransactionOut(BaseModel):
+    id: uuid.UUID
+    amount_uzs: int
+    balance_after_uzs: int
+    kind: Literal["signup_bonus", "top_up", "application_charge"]
+    description: str | None
+    application_id: uuid.UUID | None
+    vacancy_title: str | None
+    created_by_email: EmailStr | None
+    created_at: datetime
+
+
+class BalanceTransactionPage(BaseModel):
+    items: list[BalanceTransactionOut]
+    total: int
+    page: int
+    page_size: int
+
+
+class BillingSummaryOut(BaseModel):
+    billing_mode: BillingMode
+    balance_uzs: int
+    application_price_uzs: int
+    remaining_applications: int | None
 
 
 # --------------------------------------------------------------------------- bot
@@ -294,6 +438,8 @@ class QuestionBase(BaseModel):
     type: QuestionType
     options: list[str] | None = None
     is_required: bool = True
+    is_filterable: bool = False
+    profile_field: QuestionProfileField | None = None
     validation: dict[str, Any] | None = None
     translations: Translations | None = None
     vacancy_id: uuid.UUID | None = None
@@ -307,6 +453,17 @@ class QuestionBase(BaseModel):
             self.options = opts
         else:
             self.options = None
+            self.is_filterable = False
+
+        expected_profile_type = {
+            "candidate_name": "short_text",
+            "candidate_photo": "file",
+        }
+        if self.profile_field and self.type != expected_profile_type[self.profile_field]:
+            raise ValueError(
+                f"profile_field '{self.profile_field}' requires question type "
+                f"'{expected_profile_type[self.profile_field]}'"
+            )
 
         if self.type == "number":
             if self.validation:
@@ -330,11 +487,18 @@ class QuestionCreate(QuestionBase):
     pass
 
 
+class QuestionCopy(BaseModel):
+    # None copies into the company-wide set; a UUID copies into that vacancy's own questions.
+    vacancy_id: uuid.UUID | None = None
+
+
 class QuestionUpdate(BaseModel):
     text: Annotated[str, Field(min_length=1, max_length=1500)] | None = None
     type: QuestionType | None = None
     options: list[str] | None = None
     is_required: bool | None = None
+    is_filterable: bool | None = None
+    profile_field: QuestionProfileField | None = None
     validation: dict[str, Any] | None = None
     translations: Translations | None = None
 
@@ -346,6 +510,8 @@ class QuestionOut(ORMModel):
     type: str
     options: list[str] | None
     is_required: bool
+    is_filterable: bool
+    profile_field: QuestionProfileField | None
     validation: dict[str, Any] | None
     translations: Translations = {}
     sort_order: int
@@ -429,6 +595,7 @@ class ApplicationListItem(BaseModel):
     branch_id: uuid.UUID | None
     branch_name: str | None
     candidate_name: str
+    candidate_photo_url: str | None
     candidate_username: str | None
     candidate_phone: str | None
 

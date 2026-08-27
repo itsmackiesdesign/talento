@@ -92,6 +92,44 @@ async def test_list_and_filter(client):
     assert filtered.json()["items"][0]["vacancy_title"] == "Кассир"
 
 
+async def test_candidate_profile_name_and_photo_are_displayed_and_searchable(client):
+    owner = await make_company(client)
+    photo_url = "https://test.example.com/files/candidates/portrait.jpg"
+    await _seed_application(
+        owner["company_id"],
+        answers=[
+            {
+                "question_id": uuid.uuid4().hex,
+                "question_text": "Ваше имя?",
+                "type": "short_text",
+                "answer": "Азиза Каримова",
+                "skipped": False,
+                "profile_field": "candidate_name",
+                "file_url": None,
+            },
+            {
+                "question_id": uuid.uuid4().hex,
+                "question_text": "Ваше фото",
+                "type": "file",
+                "answer": "portrait.jpg",
+                "skipped": False,
+                "profile_field": "candidate_photo",
+                "file_url": photo_url,
+            },
+        ],
+    )
+
+    response = await client.get(
+        "/api/v1/applications", params={"search": "Карим"}, headers=owner["headers"]
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 1
+    item = response.json()["items"][0]
+    assert item["candidate_name"] == "Азиза Каримова"
+    assert item["candidate_photo_url"] == photo_url
+
+
 async def test_filter_by_single_choice_answer(client):
     owner = await make_company(client)
     qid = uuid.uuid4()

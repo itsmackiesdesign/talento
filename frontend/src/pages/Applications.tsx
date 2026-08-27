@@ -10,7 +10,7 @@ import {
 } from "@dnd-kit/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, ExternalLink, Inbox, KanbanSquare, Table2, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -42,6 +42,23 @@ import { cn, formatDate, formatDateTime } from "@/lib/utils";
 
 const ALL = "__all__";
 
+function questionTextToPlainText(value: string): string {
+  const withoutMarkdown = value
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/\*\*|__|~~|```|`|_/g, "");
+  const parsed = new DOMParser().parseFromString(withoutMarkdown, "text/html");
+  return (parsed.body.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+function QuestionLabel({ text }: { text: string }) {
+  const plainText = questionTextToPlainText(text);
+  return (
+    <dt className="truncate text-xs text-muted-foreground" title={plainText}>
+      {plainText}
+    </dt>
+  );
+}
+
 // Cycled by column index — statuses are HR-defined now, so there's no fixed key to key a
 // color off of.
 const ACCENT_PALETTE = [
@@ -54,6 +71,48 @@ const ACCENT_PALETTE = [
   "border-t-pink-500",
   "border-t-lime-500",
 ];
+
+function CandidateAvatar({
+  name,
+  photoUrl,
+  className = "h-10 w-10",
+}: {
+  name: string;
+  photoUrl: string | null;
+  className?: string;
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => setImageFailed(false), [photoUrl]);
+  const initials = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || "?";
+
+  if (photoUrl && !imageFailed) {
+    return (
+      <img
+        src={photoUrl}
+        alt=""
+        className={cn("shrink-0 rounded-full border object-cover", className)}
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary",
+        className,
+      )}
+      aria-hidden="true"
+    >
+      {initials}
+    </span>
+  );
+}
 
 function CandidateCard({
   application,
@@ -99,8 +158,16 @@ function CandidateCard({
         if (event.key === "Enter" || event.key === " ") onOpen();
       }}
     >
-      <p className="truncate font-medium">{application.candidate_name}</p>
-      <p className="truncate text-xs text-muted-foreground">{application.vacancy_title}</p>
+      <div className="flex min-w-0 items-center gap-3">
+        <CandidateAvatar
+          name={application.candidate_name}
+          photoUrl={application.candidate_photo_url}
+        />
+        <div className="min-w-0">
+          <p className="truncate font-medium">{application.candidate_name}</p>
+          <p className="truncate text-xs text-muted-foreground">{application.vacancy_title}</p>
+        </div>
+      </div>
       {application.branch_name && (
         <Badge variant="outline" className="mt-1.5">
           {application.branch_name}
@@ -196,7 +263,8 @@ export default function ApplicationsPage() {
         api.questions.list(vacancyFilter),
       ]);
       return [...common, ...specific].filter(
-        (q) => q.type === "single_choice" || q.type === "multi_choice",
+        (q) =>
+          q.is_filterable && (q.type === "single_choice" || q.type === "multi_choice"),
       );
     },
     enabled: vacancyFilter !== ALL,
@@ -432,7 +500,16 @@ export default function ApplicationsPage() {
                   className="cursor-pointer border-b last:border-0 hover:bg-accent/50"
                   onClick={() => navigate(`/applications/${a.id}`)}
                 >
-                  <td className="p-3 font-medium">{a.candidate_name}</td>
+                  <td className="p-3 font-medium">
+                    <div className="flex items-center gap-2">
+                      <CandidateAvatar
+                        name={a.candidate_name}
+                        photoUrl={a.candidate_photo_url}
+                        className="h-8 w-8"
+                      />
+                      <span className="truncate">{a.candidate_name}</span>
+                    </div>
+                  </td>
                   <td className="p-3">{a.vacancy_title}</td>
                   <td className="p-3 text-muted-foreground">{a.branch_name ?? "—"}</td>
                   <td className="p-3 text-muted-foreground">{a.candidate_phone ?? "—"}</td>
@@ -463,11 +540,20 @@ export default function ApplicationsPage() {
           ) : detail.data ? (
             <>
               <DialogHeader>
-                <DialogTitle>{detail.data.candidate_name}</DialogTitle>
-                <DialogDescription>
-                  {detail.data.vacancy_title}
-                  {detail.data.branch_name && ` · ${detail.data.branch_name}`}
-                </DialogDescription>
+                <div className="flex items-center gap-3">
+                  <CandidateAvatar
+                    name={detail.data.candidate_name}
+                    photoUrl={detail.data.candidate_photo_url}
+                    className="h-12 w-12"
+                  />
+                  <div className="min-w-0">
+                    <DialogTitle>{detail.data.candidate_name}</DialogTitle>
+                    <DialogDescription>
+                      {detail.data.vacancy_title}
+                      {detail.data.branch_name && ` · ${detail.data.branch_name}`}
+                    </DialogDescription>
+                  </div>
+                </div>
               </DialogHeader>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -530,7 +616,7 @@ export default function ApplicationsPage() {
                   <dl className="space-y-3">
                     {detail.data.answers.map((answer) => (
                       <div key={answer.question_id}>
-                        <dt className="text-xs text-muted-foreground">{answer.question_text}</dt>
+                        <QuestionLabel text={answer.question_text} />
                         <dd className="text-sm">
                           {answer.skipped || answer.answer === null ? (
                             <span className="text-muted-foreground">

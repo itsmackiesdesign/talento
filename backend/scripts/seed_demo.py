@@ -109,6 +109,8 @@ async def seed(email: str, password: str) -> None:
             company = Company(
                 name="Acme Coffee",
                 slug=f"acme-coffee-{secrets.token_hex(3)}",
+                billing_mode="unlimited",
+                balance_uzs=0,
                 branches_enabled=True,
             )
             db.add(company)

@@ -182,6 +182,159 @@ async def test_choice_question_requires_two_to_ten_options(client):
     assert ok.status_code == 201
 
 
+async def test_application_filter_flag_is_opt_in_and_choice_only(client):
+    owner = await make_company(client)
+
+    choice = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Смена?",
+            "type": "single_choice",
+            "options": ["Утро", "Вечер"],
+            "is_filterable": True,
+        },
+        headers=owner["headers"],
+    )
+    assert choice.status_code == 201, choice.text
+    assert choice.json()["is_filterable"] is True
+
+    ordinary = await client.post(
+        "/api/v1/questions",
+        json={"text": "Имя?", "type": "short_text", "is_filterable": True},
+        headers=owner["headers"],
+    )
+    assert ordinary.status_code == 201, ordinary.text
+    assert ordinary.json()["is_filterable"] is False
+
+
+async def test_changing_choice_to_text_disables_application_filter(client):
+    owner = await make_company(client)
+    created = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Смена?",
+            "type": "multi_choice",
+            "options": ["Утро", "Вечер"],
+            "is_filterable": True,
+        },
+        headers=owner["headers"],
+    )
+
+    updated = await client.patch(
+        f"/api/v1/questions/{created.json()['id']}",
+        json={"type": "long_text"},
+        headers=owner["headers"],
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["is_filterable"] is False
+
+
+async def test_candidate_profile_roles_require_compatible_question_types(client):
+    owner = await make_company(client)
+
+    name = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Ваше имя?",
+            "type": "short_text",
+            "profile_field": "candidate_name",
+        },
+        headers=owner["headers"],
+    )
+    assert name.status_code == 201, name.text
+    assert name.json()["profile_field"] == "candidate_name"
+
+    wrong_name = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Ваше имя?",
+            "type": "file",
+            "profile_field": "candidate_name",
+        },
+        headers=owner["headers"],
+    )
+    assert wrong_name.status_code == 422
+
+    photo = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Ваше фото",
+            "type": "file",
+            "profile_field": "candidate_photo",
+        },
+        headers=owner["headers"],
+    )
+    assert photo.status_code == 201, photo.text
+    assert photo.json()["profile_field"] == "candidate_photo"
+
+    wrong_photo = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Ваше фото",
+            "type": "short_text",
+            "profile_field": "candidate_photo",
+        },
+        headers=owner["headers"],
+    )
+    assert wrong_photo.status_code == 422
+
+
+async def test_candidate_profile_role_is_unique_in_effective_form(client):
+    owner = await make_company(client)
+    first_vacancy = await _vacancy(client, owner, "Бариста")
+    second_vacancy = await _vacancy(client, owner, "Кассир")
+
+    first = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Ваше имя?",
+            "type": "short_text",
+            "profile_field": "candidate_name",
+            "vacancy_id": first_vacancy["id"],
+        },
+        headers=owner["headers"],
+    )
+    assert first.status_code == 201, first.text
+
+    duplicate = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Имя кандидата?",
+            "type": "short_text",
+            "profile_field": "candidate_name",
+            "vacancy_id": first_vacancy["id"],
+        },
+        headers=owner["headers"],
+    )
+    assert duplicate.status_code == 409
+
+    # Vacancy-specific questions belong to separate effective forms, so a different
+    # vacancy may define its own candidate-name question.
+    other_form = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Ваше полное имя?",
+            "type": "short_text",
+            "profile_field": "candidate_name",
+            "vacancy_id": second_vacancy["id"],
+        },
+        headers=owner["headers"],
+    )
+    assert other_form.status_code == 201, other_form.text
+
+    common_conflict = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Общее имя?",
+            "type": "short_text",
+            "profile_field": "candidate_name",
+        },
+        headers=owner["headers"],
+    )
+    assert common_conflict.status_code == 409
+
+
 async def test_number_validation_range_is_checked(client):
     owner = await make_company(client)
     resp = await client.post(

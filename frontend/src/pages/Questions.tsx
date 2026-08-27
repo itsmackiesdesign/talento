@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, CopyPlus, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/api";
+import { markdownToPreviewHtml } from "@/lib/markdown";
 import {
   QUESTION_TYPES,
   type DatetimeMask,
@@ -40,6 +41,15 @@ type Draft = Partial<Question> & { optionsText?: string };
 
 const needsOptions = (type?: QuestionType) =>
   type === "single_choice" || type === "multi_choice";
+
+const compatibleProfileField = (
+  type: QuestionType | undefined,
+  current: Question["profile_field"] | undefined,
+): Question["profile_field"] => {
+  if (type === "short_text" && current === "candidate_name") return current;
+  if (type === "file" && current === "candidate_photo") return current;
+  return null;
+};
 
 export default function QuestionsPage() {
   const { t } = useTranslation();
@@ -106,6 +116,8 @@ export default function QuestionsPage() {
         type: draft.type,
         options,
         is_required: draft.is_required ?? true,
+        is_filterable: needsOptions(draft.type) ? (draft.is_filterable ?? false) : false,
+        profile_field: compatibleProfileField(draft.type, draft.profile_field),
         validation: validation && Object.keys(validation).length ? validation : null,
         translations,
       };
@@ -130,6 +142,18 @@ export default function QuestionsPage() {
     onSuccess: async () => {
       await invalidate();
       toast.success(t("toast.deleted"));
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  // A copy is independent from the moment it's created — editing either side afterwards
+  // never touches the other, same as vacancy duplication.
+  const copy = useMutation({
+    mutationFn: (question: Question) =>
+      api.questions.copy(question.id, scope === "vacancy" ? null : vacancyId!),
+    onSuccess: async () => {
+      await invalidate();
+      toast.success(t("toast.saved"));
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -204,6 +228,8 @@ export default function QuestionsPage() {
             text: "",
             type: "short_text",
             is_required: true,
+            is_filterable: false,
+            profile_field: null,
             optionsText: "",
             translations: {},
           },
@@ -255,10 +281,21 @@ export default function QuestionsPage() {
                 <SortableRow key={question.id} id={question.id}>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate font-medium">{question.text}</span>
+                      <span
+                        className="truncate font-medium"
+                        dangerouslySetInnerHTML={{ __html: markdownToPreviewHtml(question.text) }}
+                      />
                       <Badge variant="outline">{t(`questions.types.${question.type}`)}</Badge>
                       {!question.is_required && (
                         <Badge variant="secondary">{t("common.optional")}</Badge>
+                      )}
+                      {question.is_filterable && (
+                        <Badge variant="secondary">{t("questions.filterEnabled")}</Badge>
+                      )}
+                      {question.profile_field && (
+                        <Badge variant="secondary">
+                          {t(`questions.profileFields.${question.profile_field}`)}
+                        </Badge>
                       )}
                     </div>
                     {question.options && (
@@ -278,6 +315,15 @@ export default function QuestionsPage() {
                   </div>
 
                   <div className="flex shrink-0 gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title={scope === "vacancy" ? t("questions.copyToCommon") : t("questions.copyToVacancy")}
+                      disabled={copy.isPending}
+                      onClick={() => copy.mutate(question)}
+                    >
+                      <CopyPlus className="h-4 w-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" onClick={() => openEditor(question)}>
                       <Pencil className="h-4 w-4" />
                     </Button>
@@ -334,7 +380,15 @@ export default function QuestionsPage() {
                 <Label>{t("questions.type")}</Label>
                 <Select
                   value={editing.type ?? "short_text"}
-                  onValueChange={(v) => setEditing({ ...editing, type: v as QuestionType })}
+                  onValueChange={(v) => {
+                    const type = v as QuestionType;
+                    setEditing({
+                      ...editing,
+                      type,
+                      is_filterable: needsOptions(type) ? (editing.is_filterable ?? false) : false,
+                      profile_field: compatibleProfileField(type, editing.profile_field),
+                    });
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -447,6 +501,70 @@ export default function QuestionsPage() {
                       <SelectItem value="time">{t("questions.datetimeMaskTime")}</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+              )}
+
+              {needsOptions(editing.type) && (
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor="filterable">{t("questions.filterByThisQuestion")}</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("questions.filterByThisQuestionHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="filterable"
+                    checked={editing.is_filterable ?? false}
+                    onCheckedChange={(checked) =>
+                      setEditing({ ...editing, is_filterable: checked })
+                    }
+                  />
+                </div>
+              )}
+
+              {editing.type === "short_text" && (
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor="candidate-name">
+                      {t("questions.useAsCandidateName")}
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("questions.useAsCandidateNameHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="candidate-name"
+                    checked={editing.profile_field === "candidate_name"}
+                    onCheckedChange={(checked) =>
+                      setEditing({
+                        ...editing,
+                        profile_field: checked ? "candidate_name" : null,
+                      })
+                    }
+                  />
+                </div>
+              )}
+
+              {editing.type === "file" && (
+                <div className="flex items-center justify-between rounded-lg border p-3">
+                  <div>
+                    <Label htmlFor="candidate-photo">
+                      {t("questions.useAsCandidatePhoto")}
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {t("questions.useAsCandidatePhotoHint")}
+                    </p>
+                  </div>
+                  <Switch
+                    id="candidate-photo"
+                    checked={editing.profile_field === "candidate_photo"}
+                    onCheckedChange={(checked) =>
+                      setEditing({
+                        ...editing,
+                        profile_field: checked ? "candidate_photo" : null,
+                      })
+                    }
+                  />
                 </div>
               )}
 

@@ -203,7 +203,12 @@ async def tenant():
     from app.models import Company, Vacancy
 
     async with TestSession() as db:
-        company = Company(name="Acme", slug=f"acme-{uuid.uuid4().hex[:6]}")
+        company = Company(
+            name="Acme",
+            slug=f"acme-{uuid.uuid4().hex[:6]}",
+            billing_mode="unlimited",
+            balance_uzs=0,
+        )
         db.add(company)
         await db.flush()
         await _seed_default_statuses(db, company.id)
@@ -290,6 +295,8 @@ async def multi_tenant():
         company = Company(
             name="Acme",
             slug=f"acme-{uuid.uuid4().hex[:6]}",
+            billing_mode="unlimited",
+            balance_uzs=0,
             default_language="ru",
             enabled_languages=["ru", "uz"],
         )
