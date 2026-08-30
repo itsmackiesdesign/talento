@@ -11,6 +11,6 @@ fi
 
 git pull --ff-only origin master
 docker compose -f compose.vps.yaml pull db redis
-docker compose -f compose.vps.yaml build --pull api worker frontend
+docker compose -f compose.vps.yaml build --pull migrate api worker frontend
 docker compose -f compose.vps.yaml up -d --remove-orphans
 docker compose -f compose.vps.yaml ps --all
