@@ -38,9 +38,7 @@ async def _status_id(company_id: str, key: str) -> str:
 async def _seed_application(company_id: str, title="Бариста", status="new", answers=None):
     status_id = await _status_id(company_id, status)
     async with TestSession() as db:
-        vacancy = Vacancy(
-            company_id=uuid.UUID(company_id), title=title, status="active"
-        )
+        vacancy = Vacancy(company_id=uuid.UUID(company_id), title=title, status="active")
         candidate = Candidate(
             telegram_user_id=uuid.uuid4().int % 10**9,
             telegram_username="askar",
@@ -130,6 +128,44 @@ async def test_candidate_profile_name_and_photo_are_displayed_and_searchable(cli
     assert item["candidate_photo_url"] == photo_url
 
 
+async def test_legacy_candidate_name_uses_current_question_role_and_is_searchable(client):
+    owner = await make_company(client)
+    question = await client.post(
+        "/api/v1/questions",
+        json={
+            "text": "Ваше имя?",
+            "type": "short_text",
+            "profile_field": "candidate_name",
+        },
+        headers=owner["headers"],
+    )
+    assert question.status_code == 201, question.text
+    question_id = uuid.UUID(question.json()["id"])
+
+    await _seed_application(
+        owner["company_id"],
+        answers=[
+            {
+                "question_id": question_id.hex,
+                "question_text": "Ваше имя?",
+                "type": "short_text",
+                "answer": "Старый кандидат",
+                "skipped": False,
+            }
+        ],
+    )
+
+    response = await client.get(
+        "/api/v1/applications",
+        params={"search": "Старый"},
+        headers=owner["headers"],
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["candidate_name"] == "Старый кандидат"
+
+
 async def test_filter_by_single_choice_answer(client):
     owner = await make_company(client)
     qid = uuid.uuid4()
@@ -216,10 +252,20 @@ async def test_combining_two_answer_filters_requires_both(client):
 
     def answers(student: str, remote: str):
         return [
-            {"question_id": student_q.hex, "question_text": "Студент?",
-             "type": "single_choice", "answer": student, "skipped": False},
-            {"question_id": remote_q.hex, "question_text": "Удалённо?",
-             "type": "single_choice", "answer": remote, "skipped": False},
+            {
+                "question_id": student_q.hex,
+                "question_text": "Студент?",
+                "type": "single_choice",
+                "answer": student,
+                "skipped": False,
+            },
+            {
+                "question_id": remote_q.hex,
+                "question_text": "Удалённо?",
+                "type": "single_choice",
+                "answer": remote,
+                "skipped": False,
+            },
         ]
 
     await _seed_application(owner["company_id"], "Оба да", answers=answers("Да", "Да"))

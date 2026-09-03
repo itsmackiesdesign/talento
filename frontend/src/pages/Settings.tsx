@@ -55,7 +55,7 @@ import {
 import { api, ApiError } from "@/lib/api";
 import { LANGUAGE_LABELS, SUPPORTED_LANGUAGES } from "@/lib/types";
 import type { ApplicationStatusOut, Bot, Company, Language, TeamMember } from "@/lib/types";
-import { formatDate } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 
 function BotTab() {
   const { t } = useTranslation();
@@ -63,7 +63,11 @@ function BotTab() {
   const [draft, setDraft] = useState<Partial<Bot>>({});
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
-  const company = useQuery({ queryKey: ["company"], queryFn: api.company.get });
+  const company = useQuery({
+    queryKey: ["company"],
+    queryFn: api.company.get,
+    refetchInterval: (query) => query.state.data?.notification_chat_id ? false : 3000,
+  });
   const bot = useQuery<Bot | null>({
     queryKey: ["bot"],
     queryFn: () => api.bot.get().catch(() => null),
@@ -568,7 +572,6 @@ function TeamTab() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {member.telegram_linked && <Badge variant="success">Telegram</Badge>}
                 <Badge variant={member.role === "owner" ? "default" : "secondary"}>
                   {member.role === "owner" && <Crown className="mr-1 h-3 w-3" />}
                   {t(`settings.roles.${member.role}`)}
@@ -739,8 +742,8 @@ function NotificationsTab() {
   const { t } = useTranslation();
   const qc = useQueryClient();
 
-  const me = useQuery({ queryKey: ["me"], queryFn: api.auth.me });
-  const linked = Boolean(me.data?.user.telegram_user_id);
+  const company = useQuery({ queryKey: ["company"], queryFn: api.company.get });
+  const linked = Boolean(company.data?.notification_chat_id);
 
   const code = useMutation({
     mutationFn: api.notifications.linkCode,
@@ -750,7 +753,10 @@ function NotificationsTab() {
   const unlink = useMutation({
     mutationFn: api.notifications.unlink,
     onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["me"] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["company"] }),
+        qc.invalidateQueries({ queryKey: ["me"] }),
+      ]);
       toast.success(t("toast.saved"));
     },
   });
@@ -765,7 +771,8 @@ function NotificationsTab() {
         {linked ? (
           <div className="flex flex-wrap items-center gap-3">
             <Badge variant="success">
-              <Check className="mr-1 h-3 w-3" /> {t("settings.linked")}
+              <Check className="mr-1 h-3 w-3" />
+              {company.data?.notification_chat_title ?? t("settings.groupLinked")}
             </Badge>
             <Button variant="outline" size="sm" onClick={() => unlink.mutate()}>
               {t("settings.unlink")}
@@ -804,7 +811,7 @@ function NotificationsTab() {
                 {code.data.deep_link && (
                   <Button asChild variant="outline" size="sm">
                     <a href={code.data.deep_link} target="_blank" rel="noreferrer">
-                      {t("common.open")} @{code.data.bot_username}
+                      {t("settings.addBotToGroup")}
                     </a>
                   </Button>
                 )}
@@ -819,21 +826,39 @@ function NotificationsTab() {
 
 /** Row content shared by locked (system) and draggable (custom) stages — only the
  *  wrapper and the trailing action buttons differ. */
+const STATUS_COLORS = [
+  "#3b82f6",
+  "#8b5cf6",
+  "#f59e0b",
+  "#06b6d4",
+  "#10b981",
+  "#ef4444",
+  "#ec4899",
+  "#84cc16",
+];
+const DEFAULT_STATUS_COLOR = STATUS_COLORS[0];
+
 function StatusRowBody({ row, t }: { row: ApplicationStatusOut; t: (key: string) => string }) {
   return (
-    <div className="min-w-0 flex-1">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="truncate font-medium">{row.label}</span>
-        {row.is_system && (
-          <Badge variant="secondary">
-            <Lock className="mr-1 h-3 w-3" /> {t("statuses.system")}
-          </Badge>
-        )}
-        {!row.notify_candidate && <Badge variant="outline">{t("statuses.silent")}</Badge>}
+    <div className="flex min-w-0 flex-1 items-center gap-3">
+      <span
+        className="h-4 w-4 shrink-0 rounded-full border border-black/10 shadow-sm"
+        style={{ backgroundColor: row.color }}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="truncate font-medium">{row.label}</span>
+          {row.is_system && (
+            <Badge variant="secondary">
+              <Lock className="mr-1 h-3 w-3" /> {t("statuses.system")}
+            </Badge>
+          )}
+          {!row.notify_candidate && <Badge variant="outline">{t("statuses.silent")}</Badge>}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t("statuses.applicationsCount")}: {row.application_count}
+        </p>
       </div>
-      <p className="text-xs text-muted-foreground">
-        {t("statuses.applicationsCount")}: {row.application_count}
-      </p>
     </div>
   );
 }
@@ -861,10 +886,16 @@ function StatusesTab() {
 
   const save = useMutation({
     mutationFn: (row: Partial<ApplicationStatusOut>) => {
+      if (row.is_system && row.id) {
+        return api.applicationStatuses.update(row.id, {
+          color: row.color ?? DEFAULT_STATUS_COLOR,
+        });
+      }
       const payload = {
         label: row.label?.trim() ?? "",
         notify_candidate: row.notify_candidate ?? true,
         translations: row.translations ?? {},
+        color: row.color ?? DEFAULT_STATUS_COLOR,
       };
       return row.id
         ? api.applicationStatuses.update(row.id, payload)
@@ -941,6 +972,9 @@ function StatusesTab() {
             {newRow && (
               <div className="flex items-center gap-3 rounded-lg border bg-card p-3">
                 <StatusRowBody row={newRow} t={t} />
+                <Button variant="ghost" size="icon" onClick={() => setEditing(newRow)}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
               </div>
             )}
 
@@ -963,6 +997,9 @@ function StatusesTab() {
             {terminalRows.map((row) => (
               <div key={row.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
                 <StatusRowBody row={row} t={t} />
+                <Button variant="ghost" size="icon" onClick={() => setEditing(row)}>
+                  <Pencil className="h-4 w-4" />
+                </Button>
               </div>
             ))}
           </>
@@ -970,7 +1007,14 @@ function StatusesTab() {
 
         <Button
           variant="outline"
-          onClick={() => setEditing({ label: "", notify_candidate: true, translations: {} })}
+          onClick={() =>
+            setEditing({
+              label: "",
+              notify_candidate: true,
+              translations: {},
+              color: DEFAULT_STATUS_COLOR,
+            })
+          }
         >
           <Plus className="h-4 w-4" /> {t("statuses.add")}
         </Button>
@@ -1067,43 +1111,70 @@ function StatusForm({
         onSubmit();
       }}
     >
-      <LanguageTabs
-        languages={ordered}
-        active={active}
-        onChange={setActive}
-        base={baseLanguage}
-        translations={editing.translations ?? {}}
-        fields={["label"]}
-      />
+      {!editing.is_system && (
+        <>
+          <LanguageTabs
+            languages={ordered}
+            active={active}
+            onChange={setActive}
+            base={baseLanguage}
+            translations={editing.translations ?? {}}
+            fields={["label"]}
+          />
+
+          <div className="space-y-2">
+            <Label htmlFor="slabel">{t("statuses.label")}</Label>
+            <Input
+              id="slabel"
+              value={field.value("label")}
+              placeholder={field.isBase ? "" : String(editing.label ?? "")}
+              onChange={(e) => field.setValue("label", e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div>
+              <Label htmlFor="notify">{t("statuses.notifyCandidate")}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t("statuses.notifyCandidateHint")}
+              </p>
+            </div>
+            <Switch
+              id="notify"
+              checked={editing.notify_candidate ?? true}
+              onCheckedChange={(checked) => setEditing({ ...editing, notify_candidate: checked })}
+            />
+          </div>
+        </>
+      )}
 
       <div className="space-y-2">
-        <Label htmlFor="slabel">{t("statuses.label")}</Label>
-        <Input
-          id="slabel"
-          value={field.value("label")}
-          placeholder={field.isBase ? "" : String(editing.label ?? "")}
-          onChange={(e) => field.setValue("label", e.target.value)}
-        />
-      </div>
-
-      {/* Language-independent. */}
-      <div className="flex items-center justify-between rounded-lg border p-3">
-        <div>
-          <Label htmlFor="notify">{t("statuses.notifyCandidate")}</Label>
-          <p className="text-xs text-muted-foreground">{t("statuses.notifyCandidateHint")}</p>
+        <Label>{t("statuses.color")}</Label>
+        <div className="flex flex-wrap items-center gap-2">
+          {STATUS_COLORS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              className={cn(
+                "h-7 w-7 rounded-full border border-black/10 transition-transform hover:scale-110",
+                (editing.color ?? DEFAULT_STATUS_COLOR).toLowerCase() === color &&
+                  "ring-2 ring-primary ring-offset-2 ring-offset-background",
+              )}
+              style={{ backgroundColor: color }}
+              aria-label={color}
+              aria-pressed={(editing.color ?? DEFAULT_STATUS_COLOR).toLowerCase() === color}
+              onClick={() => setEditing({ ...editing, color })}
+            />
+          ))}
         </div>
-        <Switch
-          id="notify"
-          checked={editing.notify_candidate ?? true}
-          onCheckedChange={(checked) => setEditing({ ...editing, notify_candidate: checked })}
-        />
+        <p className="text-xs text-muted-foreground">{t("statuses.colorHint")}</p>
       </div>
 
       <DialogFooter className="mt-auto pt-4">
         <Button type="button" variant="ghost" onClick={onCancel}>
           {t("common.cancel")}
         </Button>
-        <Button type="submit" disabled={!editing.label?.trim() || saving}>
+        <Button type="submit" disabled={(!editing.is_system && !editing.label?.trim()) || saving}>
           {t("common.save")}
         </Button>
       </DialogFooter>
@@ -1121,7 +1192,7 @@ export default function SettingsPage() {
   const isOwner = me.data?.role === "owner";
   const allowedTabs = isOwner
     ? ["bot", "company", "statuses", "team", "notifications"]
-    : ["statuses", "team", "notifications"];
+    : ["statuses", "team"];
   const requestedTab = searchParams.get("tab");
   const activeTab = requestedTab && allowedTabs.includes(requestedTab)
     ? requestedTab
@@ -1141,7 +1212,9 @@ export default function SettingsPage() {
           {isOwner && <TabsTrigger value="company">{t("settings.tabCompany")}</TabsTrigger>}
           <TabsTrigger value="statuses">{t("settings.tabStatuses")}</TabsTrigger>
           <TabsTrigger value="team">{t("settings.tabTeam")}</TabsTrigger>
-          <TabsTrigger value="notifications">{t("settings.tabNotifications")}</TabsTrigger>
+          {isOwner && (
+            <TabsTrigger value="notifications">{t("settings.tabNotifications")}</TabsTrigger>
+          )}
         </TabsList>
 
         {isOwner && (
@@ -1160,9 +1233,11 @@ export default function SettingsPage() {
         <TabsContent value="team">
           <TeamTab />
         </TabsContent>
-        <TabsContent value="notifications">
-          <NotificationsTab />
-        </TabsContent>
+        {isOwner && (
+          <TabsContent value="notifications">
+            <NotificationsTab />
+          </TabsContent>
+        )}
       </Tabs>
     </>
   );

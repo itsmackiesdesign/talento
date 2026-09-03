@@ -45,10 +45,38 @@ DB = Annotated[AsyncSession, Depends(get_db)]
 INVITATION_TTL = timedelta(days=7)
 
 _CYRILLIC = {
-    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh",
-    "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o",
-    "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f", "х": "h", "ц": "ts",
-    "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu",
+    "а": "a",
+    "б": "b",
+    "в": "v",
+    "г": "g",
+    "д": "d",
+    "е": "e",
+    "ё": "e",
+    "ж": "zh",
+    "з": "z",
+    "и": "i",
+    "й": "y",
+    "к": "k",
+    "л": "l",
+    "м": "m",
+    "н": "n",
+    "о": "o",
+    "п": "p",
+    "р": "r",
+    "с": "s",
+    "т": "t",
+    "у": "u",
+    "ф": "f",
+    "х": "h",
+    "ц": "ts",
+    "ч": "ch",
+    "ш": "sh",
+    "щ": "sch",
+    "ъ": "",
+    "ы": "y",
+    "ь": "",
+    "э": "e",
+    "ю": "yu",
     "я": "ya",
 }
 
@@ -79,9 +107,7 @@ async def create_company(payload: CompanyCreate, user: CurrentUser, db: DB) -> C
         select(CompanyMember).where(CompanyMember.user_id == user.id).limit(1)
     )
     if already is not None:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "You already belong to a company"
-        )
+        raise HTTPException(status.HTTP_409_CONFLICT, "You already belong to a company")
 
     company = Company(
         name=payload.name.strip(),
@@ -103,7 +129,9 @@ async def create_company(payload: CompanyCreate, user: CurrentUser, db: DB) -> C
             description="Welcome bonus",
         )
     )
-    for index, (system_key, label, translations, notify) in enumerate(DEFAULT_APPLICATION_STAGES):
+    for index, (system_key, label, translations, notify, color) in enumerate(
+        DEFAULT_APPLICATION_STAGES
+    ):
         db.add(
             ApplicationStatus(
                 company_id=company.id,
@@ -111,6 +139,7 @@ async def create_company(payload: CompanyCreate, user: CurrentUser, db: DB) -> C
                 label=label,
                 translations=translations,
                 notify_candidate=notify,
+                color=color,
                 sort_order=index,
             )
         )
@@ -171,9 +200,7 @@ async def update_company(
 
 
 @router.get("/company/team", response_model=list[TeamMemberOut])
-async def list_team(
-    company: CurrentCompany, db: DB
-) -> list[TeamMemberOut]:
+async def list_team(company: CurrentCompany, db: DB) -> list[TeamMemberOut]:
     rows = (
         await db.execute(
             select(User, CompanyMember.role, CompanyMember.created_at)
@@ -280,7 +307,7 @@ async def create_team_invitation(
     await db.refresh(invitation)
     return TeamInvitationCreatedOut(
         **_invitation_out(invitation).model_dump(),
-        invite_url=f'{settings.FRONTEND_URL.rstrip("/")}/invite/{raw_token}',
+        invite_url=f"{settings.FRONTEND_URL.rstrip('/')}/invite/{raw_token}",
     )
 
 
@@ -328,9 +355,7 @@ async def preview_team_invitation(token: str, db: DB) -> TeamInvitationPreviewOu
 
 
 @router.post("/team/invitations/{token}/accept", response_model=TeamInvitationAcceptOut)
-async def accept_team_invitation(
-    token: str, user: CurrentUser, db: DB
-) -> TeamInvitationAcceptOut:
+async def accept_team_invitation(token: str, user: CurrentUser, db: DB) -> TeamInvitationAcceptOut:
     invitation = await db.scalar(
         select(TeamInvitation)
         .where(TeamInvitation.token_hash == _token_hash(token))

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CopyPlus, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, CopyPlus, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router-dom";
@@ -19,6 +19,13 @@ import {
   DrawerContent,
 } from "@/components/ui/dialog";
 import { Input, Textarea } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Label, Skeleton, Switch, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
 import {
   Select,
@@ -314,23 +321,34 @@ export default function QuestionsPage() {
                     )}
                   </div>
 
-                  <div className="flex shrink-0 gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      title={scope === "vacancy" ? t("questions.copyToCommon") : t("questions.copyToVacancy")}
-                      disabled={copy.isPending}
-                      onClick={() => copy.mutate(question)}
-                    >
-                      <CopyPlus className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => openEditor(question)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => remove.mutate(question.id)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" aria-label={t("common.actions")}>
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem
+                        disabled={copy.isPending}
+                        onSelect={() => copy.mutate(question)}
+                      >
+                        <CopyPlus />
+                        {scope === "vacancy"
+                          ? t("questions.copyToCommon")
+                          : t("questions.copyToVacancy")}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => openEditor(question)}>
+                        <Pencil /> {t("common.edit")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onSelect={() => remove.mutate(question.id)}
+                      >
+                        <Trash2 /> {t("common.delete")}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </SortableRow>
               )}
             </SortableList>

@@ -14,9 +14,22 @@ async def test_new_company_is_seeded_with_six_stages_in_order(client):
     rows = await _list(client, owner["headers"])
 
     assert [r["label"] for r in rows] == [
-        "Новая", "Просмотрена", "Интервью", "Оффер", "Принят", "Отклонена",
+        "Новая",
+        "Просмотрена",
+        "Интервью",
+        "Оффер",
+        "Принят",
+        "Отклонена",
     ]
     assert [r["is_system"] for r in rows] == [True, False, False, False, True, True]
+    assert [r["color"] for r in rows] == [
+        "#3b82f6",
+        "#8b5cf6",
+        "#f59e0b",
+        "#06b6d4",
+        "#10b981",
+        "#ef4444",
+    ]
     # System steps ship with ru/uz/en so candidate notifications always work, even though
     # the HR can never touch them.
     assert rows[0]["translations"]["en"]["label"] == "New"
@@ -27,25 +40,27 @@ async def test_custom_stage_lifecycle(client):
 
     created = await client.post(
         "/api/v1/application-statuses",
-        json={"label": "Тестовое задание", "notify_candidate": True},
+        json={"label": "Тестовое задание", "notify_candidate": True, "color": "#EC4899"},
         headers=owner["headers"],
     )
     assert created.status_code == 201
     body = created.json()
     assert body["label"] == "Тестовое задание"
     assert body["is_system"] is False
+    assert body["color"] == "#ec4899"
     # New custom stages land just before the two terminal system steps.
     rows = await _list(client, owner["headers"])
     assert rows[-3]["id"] == body["id"]
 
     updated = await client.patch(
         f"/api/v1/application-statuses/{body['id']}",
-        json={"label": "Тех. задание", "notify_candidate": False},
+        json={"label": "Тех. задание", "notify_candidate": False, "color": "#84CC16"},
         headers=owner["headers"],
     )
     assert updated.status_code == 200
     assert updated.json()["label"] == "Тех. задание"
     assert updated.json()["notify_candidate"] is False
+    assert updated.json()["color"] == "#84cc16"
 
     deleted = await client.delete(
         f"/api/v1/application-statuses/{body['id']}", headers=owner["headers"]
@@ -65,6 +80,21 @@ async def test_system_steps_reject_edit_and_delete(client):
         headers=owner["headers"],
     )
     assert edited.status_code == 400
+
+    recolored = await client.patch(
+        f"/api/v1/application-statuses/{new_row['id']}",
+        json={"color": "#112233"},
+        headers=owner["headers"],
+    )
+    assert recolored.status_code == 200
+    assert recolored.json()["color"] == "#112233"
+
+    invalid_color = await client.patch(
+        f"/api/v1/application-statuses/{new_row['id']}",
+        json={"color": "red"},
+        headers=owner["headers"],
+    )
+    assert invalid_color.status_code == 422
 
     deleted = await client.delete(
         f"/api/v1/application-statuses/{new_row['id']}", headers=owner["headers"]
@@ -86,8 +116,7 @@ async def test_deleting_a_stage_in_use_requires_reassignment(client):
 
     new_id = await _status_id(owner["company_id"], "new")
     moved = await client.delete(
-        f"/api/v1/application-statuses/{interview_id}"
-        f"?move_applications_to={new_id}",
+        f"/api/v1/application-statuses/{interview_id}?move_applications_to={new_id}",
         headers=owner["headers"],
     )
     assert moved.status_code == 204

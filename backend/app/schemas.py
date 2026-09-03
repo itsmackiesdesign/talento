@@ -9,7 +9,13 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 Language = Literal["ru", "uz", "en"]
 VacancyStatus = Literal["draft", "active", "archived"]
 QuestionType = Literal[
-    "short_text", "long_text", "single_choice", "multi_choice", "number", "phone", "file",
+    "short_text",
+    "long_text",
+    "single_choice",
+    "multi_choice",
+    "number",
+    "phone",
+    "file",
     "datetime",
 ]
 DatetimeMask = Literal["date", "datetime", "time"]
@@ -113,6 +119,8 @@ class CompanyOut(ORMModel):
     is_suspended: bool
     suspension_reason: str | None
     suspended_at: datetime | None
+    notification_chat_id: int | None
+    notification_chat_title: str | None
     created_at: datetime
 
 
@@ -321,7 +329,6 @@ class BranchCreate(BaseModel):
         if (self.latitude is None) != (self.longitude is None):
             raise ValueError("Provide both latitude and longitude, or neither")
         return self
-
 
 
 class BranchUpdate(BaseModel):
@@ -624,12 +631,21 @@ class ApplicationStatusCreate(BaseModel):
     label: Annotated[str, Field(min_length=1, max_length=60)]
     translations: Translations | None = None
     notify_candidate: bool = True
+    color: Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")] = "#3b82f6"
 
 
 class ApplicationStatusUpdate(BaseModel):
     label: Annotated[str, Field(min_length=1, max_length=60)] | None = None
     translations: Translations | None = None
     notify_candidate: bool | None = None
+    color: Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")] | None = None
+
+    @field_validator("color")
+    @classmethod
+    def color_cannot_be_null(cls, value: str | None) -> str | None:
+        if value is None:
+            raise ValueError("color cannot be null")
+        return value
 
 
 class ApplicationStatusOut(ORMModel):
@@ -637,6 +653,7 @@ class ApplicationStatusOut(ORMModel):
     label: str
     translations: Translations = {}
     notify_candidate: bool
+    color: str
     is_system: bool
     sort_order: int
     application_count: int = 0

@@ -69,6 +69,8 @@ export interface Company {
   is_suspended: boolean;
   suspension_reason: string | null;
   suspended_at: string | null;
+  notification_chat_id: number | null;
+  notification_chat_title: string | null;
   created_at: string;
 }
 
@@ -159,6 +161,7 @@ export interface ApplicationStatusOut {
   label: string;
   translations: Translations;
   notify_candidate: boolean;
+  color: string;
   is_system: boolean;
   sort_order: number;
   application_count: number;

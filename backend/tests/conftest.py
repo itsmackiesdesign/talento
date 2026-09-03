@@ -182,7 +182,9 @@ async def _seed_default_statuses(db: AsyncSession, company_id: uuid.UUID) -> Non
     the company directly rather than through the API."""
     from app.models import DEFAULT_APPLICATION_STAGES, ApplicationStatus
 
-    for index, (system_key, label, translations, notify) in enumerate(DEFAULT_APPLICATION_STAGES):
+    for index, (system_key, label, translations, notify, color) in enumerate(
+        DEFAULT_APPLICATION_STAGES
+    ):
         db.add(
             ApplicationStatus(
                 company_id=company_id,
@@ -190,6 +192,7 @@ async def _seed_default_statuses(db: AsyncSession, company_id: uuid.UUID) -> Non
                 label=label,
                 translations=translations,
                 notify_candidate=notify,
+                color=color,
                 sort_order=index,
             )
         )
@@ -319,9 +322,7 @@ async def multi_tenant():
             description="Готовим кофе",
             city="Ташкент",
             status="active",
-            translations={
-                "uz": {"title": "Barista", "description": "Qahva tayyorlaymiz"}
-            },
+            translations={"uz": {"title": "Barista", "description": "Qahva tayyorlaymiz"}},
         )
         db.add_all([bot_row, vacancy])
         await db.commit()

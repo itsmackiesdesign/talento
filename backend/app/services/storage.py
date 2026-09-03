@@ -12,7 +12,9 @@ and Redis; production should always set the S3_* variables.
 import asyncio
 import os
 import uuid
+from collections.abc import Iterable
 from pathlib import Path
+from urllib.parse import quote
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -41,9 +43,7 @@ def _put_to_s3(key: str, content: bytes, content_type: str) -> str:
         aws_secret_access_key=settings.S3_SECRET_KEY,
         region_name=settings.S3_REGION,
     )
-    client.put_object(
-        Bucket=settings.S3_BUCKET, Key=key, Body=content, ContentType=content_type
-    )
+    client.put_object(Bucket=settings.S3_BUCKET, Key=key, Body=content, ContentType=content_type)
     if settings.S3_PUBLIC_URL:
         return f"{settings.S3_PUBLIC_URL.rstrip('/')}/{key}"
     if settings.S3_ENDPOINT_URL:
@@ -113,3 +113,52 @@ async def save_candidate_file(
     await asyncio.to_thread(dest.write_bytes, content)
     log.info("file_saved_locally", path=str(dest), bytes=len(content))
     return f"{settings.BASE_URL.rstrip('/')}/files/{key}"
+
+
+def find_legacy_candidate_file_urls(
+    company_id: uuid.UUID | str, filenames: Iterable[str]
+) -> dict[str, str]:
+    """Resolve pre-snapshot local uploads when their original name is unambiguous.
+
+    Older application answers kept only the original filename while the generated storage
+    key lived on disk. We deliberately return no URL when two uploads share the same safe
+    filename: showing the wrong person's photo is worse than showing a placeholder.
+    S3 installations cannot safely reconstruct an unrecorded random key, so only the local
+    development storage layout is recoverable here.
+    """
+    if s3_enabled():
+        return {}
+
+    requested_by_safe: dict[str, set[str]] = {}
+    for filename in filenames:
+        if not isinstance(filename, str) or not filename.strip():
+            continue
+        requested_by_safe.setdefault(_safe_name(filename), set()).add(filename)
+    if not requested_by_safe:
+        return {}
+
+    directory = Path(settings.LOCAL_UPLOAD_DIR) / "candidates" / str(company_id)
+    if not directory.is_dir():
+        return {}
+
+    matches: dict[str, list[Path]] = {name: [] for name in requested_by_safe}
+    for path in directory.iterdir():
+        if not path.is_file() or len(path.name) < 34 or path.name[32] != "-":
+            continue
+        prefix, original_name = path.name[:32], path.name[33:]
+        try:
+            int(prefix, 16)
+        except ValueError:
+            continue
+        if original_name in matches:
+            matches[original_name].append(path)
+
+    resolved: dict[str, str] = {}
+    for safe_name, paths in matches.items():
+        if len(paths) != 1:
+            continue
+        key = f"candidates/{company_id}/{paths[0].name}"
+        url = f"{settings.BASE_URL.rstrip('/')}/files/{quote(key)}"
+        for requested in requested_by_safe[safe_name]:
+            resolved[requested] = url
+    return resolved

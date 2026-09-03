@@ -87,6 +87,7 @@ async def collect_questions(
             is_required=q.is_required,
             validation=q.validation,
             profile_field=q.profile_field,
+            is_common=q.vacancy_id is None,
             base_text=q.text,
             base_options=q.options,
         )
@@ -200,9 +201,7 @@ def render_vacancy_card(lang: str, vacancy: Vacancy, branch: Branch | None) -> s
     if city:
         lines.append(f"🌆 <b>{t(lang, 'field_city')}:</b> {escape(city)}")
     if employment_type:
-        lines.append(
-            f"🕒 <b>{t(lang, 'field_employment')}:</b> {escape(employment_type)}"
-        )
+        lines.append(f"🕒 <b>{t(lang, 'field_employment')}:</b> {escape(employment_type)}")
     salary = format_salary(lang, vacancy)
     if salary:
         lines.append(f"💰 <b>{t(lang, 'field_salary')}:</b> {escape(salary)}")
@@ -251,10 +250,9 @@ def build_answers_payload(questions: list[QuestionSnapshot], answers: dict) -> l
                 "answer": None if stored.get("skipped") else stored.get("value"),
                 "skipped": bool(stored.get("skipped")),
                 "profile_field": q.profile_field,
+                "is_common": q.is_common,
                 "file_url": (
-                    stored.get("raw")
-                    if q.profile_field == "candidate_photo" and not stored.get("skipped")
-                    else None
+                    stored.get("raw") if q.type == "file" and not stored.get("skipped") else None
                 ),
             }
         )

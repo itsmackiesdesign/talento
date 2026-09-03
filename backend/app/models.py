@@ -47,9 +47,7 @@ class Company(Base):
             name="ck_company_billing_mode",
         ),
         CheckConstraint("balance_uzs >= 0", name="ck_company_balance_nonnegative"),
-        CheckConstraint(
-            "application_price_uzs > 0", name="ck_company_application_price_positive"
-        ),
+        CheckConstraint("application_price_uzs > 0", name="ck_company_application_price_positive"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -67,18 +65,18 @@ class Company(Base):
     billing_mode: Mapped[str] = mapped_column(
         String(30), default="pay_per_application", nullable=False
     )
-    balance_uzs: Mapped[int] = mapped_column(
-        BigInteger, default=SIGNUP_BONUS_UZS, nullable=False
-    )
-    application_price_uzs: Mapped[int] = mapped_column(
-        BigInteger, default=2000, nullable=False
-    )
+    balance_uzs: Mapped[int] = mapped_column(BigInteger, default=SIGNUP_BONUS_UZS, nullable=False)
+    application_price_uzs: Mapped[int] = mapped_column(BigInteger, default=2000, nullable=False)
     is_suspended: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     suspension_reason: Mapped[str | None] = mapped_column(Text)
     suspended_at: Mapped[datetime | None] = mapped_column(TS)
     suspended_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )
+    # The platform service bot posts one notification per application to this tenant-owned
+    # Telegram group. Negative IDs are normal for groups/supergroups.
+    notification_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    notification_chat_title: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     members: Mapped[list["CompanyMember"]] = relationship(
@@ -168,9 +166,7 @@ class Bot(Base):
     # {lang: {welcome_message, about_text, after_apply_message, contacts_text}}
     # — see app/core/i18n.py
     translations: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=dict)
-    notify_candidate_on_status: Mapped[bool] = mapped_column(
-        Boolean, default=True, nullable=False
-    )
+    notify_candidate_on_status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
@@ -332,14 +328,38 @@ SYSTEM_STATUS_KEYS = ("new", "hired", "rejected")
 
 # Seeded once per company on creation (companies.py) — order here becomes initial sort_order.
 # notify_candidate mirrors what used to be a hardcoded NOTIFIABLE set in workers/tasks.py.
-# (system_key, ru label, {lang: {label}} translations, notify_candidate)
-DEFAULT_APPLICATION_STAGES: tuple[tuple[str | None, str, dict[str, Any], bool], ...] = (
-    ("new", "Новая", {"uz": {"label": "Yangi"}, "en": {"label": "New"}}, False),
-    (None, "Просмотрена", {"uz": {"label": "Ko‘rilgan"}, "en": {"label": "Viewed"}}, False),
-    (None, "Интервью", {"uz": {"label": "Suhbat"}, "en": {"label": "Interview"}}, True),
-    (None, "Оффер", {"uz": {"label": "Taklif"}, "en": {"label": "Offer"}}, True),
-    ("hired", "Принят", {"uz": {"label": "Qabul qilingan"}, "en": {"label": "Hired"}}, True),
-    ("rejected", "Отклонена", {"uz": {"label": "Rad etilgan"}, "en": {"label": "Rejected"}}, True),
+# (system_key, ru label, {lang: {label}} translations, notify_candidate, color)
+DEFAULT_APPLICATION_STAGES: tuple[tuple[str | None, str, dict[str, Any], bool, str], ...] = (
+    ("new", "Новая", {"uz": {"label": "Yangi"}, "en": {"label": "New"}}, False, "#3b82f6"),
+    (
+        None,
+        "Просмотрена",
+        {"uz": {"label": "Ko‘rilgan"}, "en": {"label": "Viewed"}},
+        False,
+        "#8b5cf6",
+    ),
+    (
+        None,
+        "Интервью",
+        {"uz": {"label": "Suhbat"}, "en": {"label": "Interview"}},
+        True,
+        "#f59e0b",
+    ),
+    (None, "Оффер", {"uz": {"label": "Taklif"}, "en": {"label": "Offer"}}, True, "#06b6d4"),
+    (
+        "hired",
+        "Принят",
+        {"uz": {"label": "Qabul qilingan"}, "en": {"label": "Hired"}},
+        True,
+        "#10b981",
+    ),
+    (
+        "rejected",
+        "Отклонена",
+        {"uz": {"label": "Rad etilgan"}, "en": {"label": "Rejected"}},
+        True,
+        "#ef4444",
+    ),
 )
 
 
@@ -348,8 +368,9 @@ class ApplicationStatus(Base):
 
     ``new`` / ``hired`` / ``rejected`` are seeded for every company (see ``companies.py`` and
     the ``application_pipeline_stages`` migration) with ``system_key`` set and are otherwise
-    ordinary rows — the *API* refuses to edit, delete or reorder them (spec: system steps are
-    fully locked), not a DB constraint, so the check lives in ``app/api/application_statuses.py``.
+    ordinary rows — the *API* refuses to rename, delete or reorder them (only their display
+    color is editable), not a DB constraint, so the check lives in
+    ``app/api/application_statuses.py``.
     Everything else is a step the HR created, freely editable, deletable (once no application
     still sits in it) and reorderable among themselves.
     """
@@ -359,6 +380,7 @@ class ApplicationStatus(Base):
         # NULLs are distinct in Postgres, so this only constrains the system rows — a
         # company can still have any number of custom (system_key IS NULL) statuses.
         UniqueConstraint("company_id", "system_key", name="uq_status_company_system_key"),
+        CheckConstraint("color ~ '^#[0-9A-Fa-f]{6}$'", name="ck_application_status_color"),
         Index("ix_application_statuses_company_sort", "company_id", "sort_order"),
     )
 
@@ -373,6 +395,9 @@ class ApplicationStatus(Base):
     # Whether moving an application into this step messages the candidate. Defaults off for
     # 'new' (that's application creation, not a transition) and on for everything else.
     notify_candidate: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    color: Mapped[str] = mapped_column(
+        String(7), default="#3b82f6", server_default="#3b82f6", nullable=False
+    )
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
@@ -471,9 +496,7 @@ class AdminAuditLog(Base):
     __table_args__ = (Index("ix_admin_audit_created", "created_at"),)
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    actor_user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id"), nullable=False
-    )
+    actor_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
     target_company_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("companies.id", ondelete="SET NULL")
     )
@@ -495,9 +518,7 @@ class BalanceTransaction(Base):
             name="ck_balance_transaction_kind",
         ),
         CheckConstraint("amount_uzs <> 0", name="ck_balance_transaction_nonzero"),
-        CheckConstraint(
-            "balance_after_uzs >= 0", name="ck_balance_after_nonnegative"
-        ),
+        CheckConstraint("balance_after_uzs >= 0", name="ck_balance_after_nonnegative"),
         Index("ix_balance_transactions_company_created", "company_id", "created_at"),
     )
 

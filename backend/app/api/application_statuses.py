@@ -1,7 +1,7 @@
 """The HR's own kanban pipeline: CRUD, reordering, and deletion with reassignment.
 
 'new' / 'hired' / 'rejected' are seeded once per company (see ``companies.py``) and are
-system steps — every endpoint here rejects an attempt to edit, delete or reorder one.
+system steps — only their display color is editable; rename, delete and reorder remain locked.
 Everything else is the HR's own stage, freely editable, and deletable once no application
 still sits in it (or after the caller says where those applications should go instead).
 """
@@ -94,6 +94,7 @@ async def create_status(
             payload.translations, TRANSLATABLE, company.enabled_languages
         ),
         notify_candidate=payload.notify_candidate,
+        color=payload.color.lower(),
         sort_order=next_order,
     )
     db.add(row)
@@ -107,11 +108,15 @@ async def update_status(
     status_id: uuid.UUID, payload: ApplicationStatusUpdate, company: CurrentCompany, db: DB
 ) -> ApplicationStatusOut:
     row = await get_owned_or_404(db, ApplicationStatus, status_id, company.id)
-    _require_custom(row)
-
     data = payload.model_dump(exclude_unset=True)
+    # System steps remain structurally locked, but their presentation color belongs to the
+    # tenant just like every custom step's color.
+    if row.is_system and set(data) - {"color"}:
+        _require_custom(row)
     if "label" in data:
         data["label"] = data["label"].strip()
+    if data.get("color"):
+        data["color"] = data["color"].lower()
     if "translations" in data:
         data["translations"] = clean_translations(
             data["translations"], TRANSLATABLE, company.enabled_languages

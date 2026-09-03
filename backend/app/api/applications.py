@@ -22,6 +22,7 @@ from app.models import (
     ApplicationStatusHistory,
     Branch,
     Candidate,
+    Question,
     Vacancy,
 )
 from app.schemas import (
@@ -34,6 +35,7 @@ from app.schemas import (
     StatusUpdate,
 )
 from app.services.candidate_profiles import resolve_candidate_profile
+from app.services.storage import find_legacy_candidate_file_urls
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 log = get_logger(__name__)
@@ -152,7 +154,23 @@ def _apply_filters(
                     EXISTS (
                         SELECT 1
                         FROM jsonb_array_elements(applications.answers) AS profile_answer
-                        WHERE profile_answer->>'profile_field' = 'candidate_name'
+                        WHERE (
+                            profile_answer->>'profile_field' = 'candidate_name'
+                            OR (
+                                profile_answer->>'profile_field' IS NULL
+                                AND EXISTS (
+                                    SELECT 1 FROM questions AS profile_question
+                                    WHERE replace(profile_question.id::text, '-', '') =
+                                              replace(profile_answer->>'question_id', '-', '')
+                                      AND profile_question.company_id = applications.company_id
+                                      AND profile_question.profile_field = 'candidate_name'
+                                      AND (
+                                          profile_question.vacancy_id IS NULL
+                                          OR profile_question.vacancy_id = applications.vacancy_id
+                                      )
+                                )
+                            )
+                        )
                           AND profile_answer->>'answer' ILIKE :candidate_name_pattern
                     )
                     """
@@ -168,8 +186,17 @@ def _to_item(
     cand: Candidate,
     branch: Branch | None,
     app_status: ApplicationStatus,
+    current_profile_fields: dict[str, str] | None = None,
+    enabled_profile_fields: set[str] | None = None,
+    legacy_file_urls: dict[str, str] | None = None,
 ):
-    profile = resolve_candidate_profile(app.answers, cand.first_name)
+    profile = resolve_candidate_profile(
+        app.answers,
+        cand.first_name,
+        current_profile_fields=current_profile_fields,
+        enabled_profile_fields=enabled_profile_fields,
+        legacy_file_urls=legacy_file_urls,
+    )
 
     return ApplicationListItem(
         id=app.id,
@@ -186,6 +213,47 @@ def _to_item(
     )
 
 
+async def _load_profile_questions(
+    db: AsyncSession, company_id: uuid.UUID
+) -> list[tuple[str, uuid.UUID | None, str]]:
+    rows = (
+        await db.execute(
+            select(Question.id, Question.vacancy_id, Question.profile_field).where(
+                Question.company_id == company_id,
+                Question.profile_field.is_not(None),
+            )
+        )
+    ).all()
+    return [
+        (question_id.hex, question_vacancy_id, profile_field)
+        for question_id, question_vacancy_id, profile_field in rows
+    ]
+
+
+def _profile_config_for_vacancy(
+    profile_questions: list[tuple[str, uuid.UUID | None, str]], vacancy_id: uuid.UUID
+) -> tuple[dict[str, str], set[str]]:
+    fields = {
+        question_id: profile_field
+        for question_id, question_vacancy_id, profile_field in profile_questions
+        if question_vacancy_id is None or question_vacancy_id == vacancy_id
+    }
+    return fields, set(fields.values())
+
+
+def _legacy_file_names(applications: list[Application]) -> set[str]:
+    return {
+        answer["answer"]
+        for application in applications
+        for answer in application.answers or []
+        if answer.get("type") == "file"
+        and not answer.get("skipped")
+        and not answer.get("file_url")
+        and isinstance(answer.get("answer"), str)
+        and answer["answer"].strip()
+    }
+
+
 @router.get("", response_model=ApplicationPage)
 async def list_applications(
     company: CurrentCompany,
@@ -199,7 +267,7 @@ async def list_applications(
     date_to: date | None = None,
     search: Annotated[str | None, Query(description="Name, @username or phone")] = None,
     answers: Annotated[
-        str | None, Query(description='JSON object {question_id: value} — see Settings')
+        str | None, Query(description="JSON object {question_id: value} — see Settings")
     ] = None,
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -215,9 +283,7 @@ async def list_applications(
         answers,
     )
 
-    total = await db.scalar(
-        select(func.count()).select_from(stmt.order_by(None).subquery())
-    ) or 0
+    total = await db.scalar(select(func.count()).select_from(stmt.order_by(None).subquery())) or 0
 
     rows = (
         await db.execute(
@@ -227,8 +293,29 @@ async def list_applications(
         )
     ).all()
 
+    profile_questions = await _load_profile_questions(db, company.id)
+    legacy_file_urls = find_legacy_candidate_file_urls(
+        company.id, _legacy_file_names([row[0] for row in rows])
+    )
+
+    items = []
+    for app, vacancy, cand, branch, app_status in rows:
+        profile_fields, enabled_fields = _profile_config_for_vacancy(profile_questions, vacancy.id)
+        items.append(
+            _to_item(
+                app,
+                vacancy,
+                cand,
+                branch,
+                app_status,
+                profile_fields,
+                enabled_fields,
+                legacy_file_urls,
+            )
+        )
+
     return ApplicationPage(
-        items=[_to_item(*row) for row in rows],
+        items=items,
         total=total,
         page=page,
         page_size=page_size,
@@ -314,9 +401,7 @@ async def export_applications(
 
 async def _load_owned(db: AsyncSession, application_id: uuid.UUID, company_id: uuid.UUID):
     row = (
-        await db.execute(
-            _base_query(company_id).where(Application.id == application_id)
-        )
+        await db.execute(_base_query(company_id).where(Application.id == application_id))
     ).first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Application not found")
@@ -344,7 +429,19 @@ async def get_application(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Application not found")
     app, vacancy, cand, branch, app_status = row
 
-    item = _to_item(app, vacancy, cand, branch, app_status)
+    profile_questions = await _load_profile_questions(db, company.id)
+    profile_fields, enabled_fields = _profile_config_for_vacancy(profile_questions, vacancy.id)
+    legacy_file_urls = find_legacy_candidate_file_urls(company.id, _legacy_file_names([app]))
+    item = _to_item(
+        app,
+        vacancy,
+        cand,
+        branch,
+        app_status,
+        profile_fields,
+        enabled_fields,
+        legacy_file_urls,
+    )
     return ApplicationDetail(
         **item.model_dump(),
         answers=app.answers or [],
@@ -437,9 +534,7 @@ async def add_comment(
 
 
 @router.delete("/{application_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_application(
-    application_id: uuid.UUID, company: CurrentCompany, db: DB
-) -> None:
+async def delete_application(application_id: uuid.UUID, company: CurrentCompany, db: DB) -> None:
     """Hard delete — used to honour a candidate's personal-data erasure request (spec §4)."""
     app, *_ = await _load_owned(db, application_id, company.id)
     full = await db.get(Application, app.id)

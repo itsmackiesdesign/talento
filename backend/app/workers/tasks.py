@@ -5,14 +5,16 @@ owns its own event loop and session — nothing is shared with the web process.
 """
 
 import asyncio
+import re
 import uuid
 from collections.abc import Coroutine
-from html import escape
+from html import escape, unescape
 from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy import select
 
+from app.bot.markup import to_plain
 from app.bot.texts import t
 from app.core.config import settings
 from app.core.crypto import decrypt
@@ -26,8 +28,7 @@ from app.models import (
     Branch,
     Candidate,
     Company,
-    CompanyMember,
-    User,
+    Question,
     Vacancy,
 )
 from app.services import telegram as tg
@@ -35,6 +36,10 @@ from app.services.candidate_profiles import resolve_candidate_profile
 from app.workers.celery_app import celery_app
 
 log = get_logger(__name__)
+
+TELEGRAM_CAPTION_LIMIT = 1024
+TELEGRAM_MESSAGE_LIMIT = 4000
+_HTML_TAG = re.compile(r"<[^>]+>")
 
 
 async def _run_with_fresh_db(coro: Coroutine[Any, Any, str]) -> str:
@@ -70,20 +75,22 @@ def _panel_button(application_id: uuid.UUID) -> dict[str, Any] | None:
 
 async def _send_hr_application_notification(
     chat_id: int,
-    text: str,
+    summary: str,
+    common_answers: str | None,
     photo_url: str | None,
     reply_markup: dict[str, Any] | None,
 ) -> None:
+    full_text = f"{summary}\n\n{common_answers}" if common_answers else summary
     if photo_url:
+        caption = full_text if len(full_text) <= TELEGRAM_CAPTION_LIMIT else summary
         try:
             await tg.send_photo(
                 settings.PLATFORM_BOT_TOKEN,
                 chat_id,
                 photo_url,
-                text,
+                caption,
                 reply_markup=reply_markup,
             )
-            return
         except tg.TelegramError as exc:
             # A local/private storage URL may not be reachable by Telegram. The HR should
             # still receive the application, so retry as text with the same panel button.
@@ -93,13 +100,69 @@ async def _send_hr_application_notification(
                 photo_url=photo_url,
                 error=exc.description,
             )
+        else:
+            if caption != full_text and common_answers:
+                for chunk in _message_chunks(common_answers):
+                    await tg.send_message(settings.PLATFORM_BOT_TOKEN, chat_id, chunk)
+            return
 
-    await tg.send_message(
-        settings.PLATFORM_BOT_TOKEN,
-        chat_id,
-        text,
-        reply_markup=reply_markup,
-    )
+    for index, chunk in enumerate(_message_chunks(full_text)):
+        await tg.send_message(
+            settings.PLATFORM_BOT_TOKEN,
+            chat_id,
+            chunk,
+            reply_markup=reply_markup if index == 0 else None,
+        )
+
+
+def _message_chunks(text: str) -> list[str]:
+    """Split on line boundaries so each chunk remains valid Telegram HTML."""
+    chunks: list[str] = []
+    current = ""
+    for line in text.splitlines():
+        candidate = f"{current}\n{line}" if current else line
+        if current and len(candidate) > TELEGRAM_MESSAGE_LIMIT:
+            chunks.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks or [""]
+
+
+def _plain_question(text: str) -> str:
+    without_html = _HTML_TAG.sub("", to_plain(text or ""))
+    return " ".join(unescape(without_html).split())
+
+
+def _answer_value(answer: dict[str, Any]) -> str:
+    if answer.get("skipped") or answer.get("answer") is None:
+        return "—"
+    value = answer.get("answer")
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
+def _common_answers_text(
+    answers: list[dict[str, Any]], current_common_question_ids: set[str]
+) -> str | None:
+    lines: list[str] = []
+    for answer in answers:
+        # New snapshots carry their scope. The ID fallback keeps applications submitted
+        # before this release useful while the original common question still exists.
+        is_common = answer.get("is_common") is True or (
+            "is_common" not in answer
+            and answer.get("question_id") in current_common_question_ids
+        )
+        if not is_common or answer.get("profile_field") == "candidate_photo":
+            continue
+        label = _plain_question(str(answer.get("question_text") or "")) or "Вопрос"
+        lines.append(f"<b>{escape(label)}</b>\n{escape(_answer_value(answer))}")
+    if not lines:
+        return None
+    return "📝 <b>Ответы на общие вопросы</b>\n\n" + "\n\n".join(lines)
 
 
 async def _notify_new_application(application_id: str) -> str:
@@ -121,51 +184,44 @@ async def _notify_new_application(application_id: str) -> str:
         if row is None:
             return "application not found"
         application, vacancy, candidate, company, branch = row
-
-        recipients = (
+        current_common_question_ids = set(
             await db.scalars(
-                select(User.telegram_user_id)
-                .join(CompanyMember, CompanyMember.user_id == User.id)
-                .where(
-                    CompanyMember.company_id == company.id,
-                    User.telegram_user_id.is_not(None),
+                select(Question.id).where(
+                    Question.company_id == company.id,
+                    Question.vacancy_id.is_(None),
                 )
             )
-        ).all()
+        )
+        common_ids = {question_id.hex for question_id in current_common_question_ids}
+        chat_id = company.notification_chat_id
 
-    if not recipients:
-        log.info("hr_notify_no_recipients", company_id=str(company.id))
-        return "no linked recipients"
+    if chat_id is None:
+        log.info("hr_notify_no_group", company_id=str(company.id))
+        return "no linked group"
 
     profile = resolve_candidate_profile(application.answers, candidate.first_name)
     lines = ["🔔 <b>Новая заявка</b>", ""]
-    if branch is not None:
-        lines.append(f"🏢 Филиал: {escape(branch.name)}")
+    lines.append(f"🏢 Филиал: {escape(branch.name if branch else '—')}")
     lines.append(f"💼 Вакансия: {escape(vacancy.title)}")
     lines.append(f"👤 Кандидат: {escape(profile.name)}")
-    if candidate.phone:
-        lines.append(f"📞 Телефон: {escape(candidate.phone)}")
-    if candidate.telegram_username:
-        lines.append(f"✈️ Telegram: @{escape(candidate.telegram_username)}")
-    text = "\n".join(lines)
+    summary = "\n".join(lines)
+    common_answers = _common_answers_text(application.answers or [], common_ids)
     reply_markup = _panel_button(application.id)
 
-    sent = 0
-    for chat_id in recipients:
-        try:
-            await _send_hr_application_notification(
-                chat_id,
-                text,
-                profile.photo_url,
-                reply_markup,
-            )
-            sent += 1
-        except tg.TelegramError as exc:
-            # Most likely the HR blocked the bot; log and keep going for the rest of the team.
-            log.warning("hr_notify_failed", chat_id=chat_id, error=exc.description)
+    try:
+        await _send_hr_application_notification(
+            chat_id,
+            summary,
+            common_answers,
+            profile.photo_url,
+            reply_markup,
+        )
+    except tg.TelegramError as exc:
+        log.warning("hr_notify_failed", chat_id=chat_id, error=exc.description)
+        return f"failed: {exc.description}"
 
-    log.info("hr_notified", application_id=application_id, sent=sent)
-    return f"sent to {sent}/{len(recipients)}"
+    log.info("hr_group_notified", application_id=application_id, chat_id=chat_id)
+    return "sent to group"
 
 
 @celery_app.task(name="talento.notify_candidate_status", max_retries=3, default_retry_delay=30)

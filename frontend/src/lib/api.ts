@@ -296,11 +296,21 @@ export const api = {
 
   applicationStatuses: {
     list: () => get<ApplicationStatusOut[]>("/application-statuses"),
-    create: (data: { label: string; translations?: Translations; notify_candidate?: boolean }) =>
+    create: (data: {
+      label: string;
+      translations?: Translations;
+      notify_candidate?: boolean;
+      color?: string;
+    }) =>
       post<ApplicationStatusOut>("/application-statuses", data),
     update: (
       id: string,
-      data: Partial<{ label: string; translations: Translations; notify_candidate: boolean }>,
+      data: Partial<{
+        label: string;
+        translations: Translations;
+        notify_candidate: boolean;
+        color: string;
+      }>,
     ) => patch<ApplicationStatusOut>(`/application-statuses/${id}`, data),
     remove: (id: string, moveApplicationsTo?: string) =>
       del<void>(`/application-statuses/${id}${qs({ move_applications_to: moveApplicationsTo })}`),

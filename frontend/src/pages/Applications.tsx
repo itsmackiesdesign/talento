@@ -59,19 +59,6 @@ function QuestionLabel({ text }: { text: string }) {
   );
 }
 
-// Cycled by column index — statuses are HR-defined now, so there's no fixed key to key a
-// color off of.
-const ACCENT_PALETTE = [
-  "border-t-blue-500",
-  "border-t-violet-500",
-  "border-t-amber-500",
-  "border-t-cyan-500",
-  "border-t-emerald-500",
-  "border-t-red-500",
-  "border-t-pink-500",
-  "border-t-lime-500",
-];
-
 function CandidateAvatar({
   name,
   photoUrl,
@@ -83,7 +70,7 @@ function CandidateAvatar({
 }) {
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => setImageFailed(false), [photoUrl]);
-  const initials = name
+  const initials = (name === "—" ? "" : name)
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
@@ -180,12 +167,10 @@ function CandidateCard({
 
 function KanbanColumn({
   status,
-  accent,
   items,
   onOpen,
 }: {
   status: ApplicationStatusOut;
-  accent: string;
   items: ApplicationListItem[];
   onOpen: (id: string) => void;
 }) {
@@ -196,9 +181,9 @@ function KanbanColumn({
       ref={setNodeRef}
       className={cn(
         "flex w-64 shrink-0 flex-col gap-2 rounded-xl border border-t-2 bg-muted/40 p-2 transition-colors",
-        accent,
         isOver && "bg-accent",
       )}
+      style={{ borderTopColor: status.color }}
     >
       <div className="flex items-center justify-between px-1 py-1">
         <span className="text-sm font-medium">{status.label}</span>
@@ -468,11 +453,10 @@ export default function ApplicationsPage() {
         <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
           <div className="table-scroll pb-4">
             <div className="flex gap-3">
-              {statusList.map((status, index) => (
+              {statusList.map((status) => (
                 <KanbanColumn
                   key={status.id}
                   status={status}
-                  accent={ACCENT_PALETTE[index % ACCENT_PALETTE.length]}
                   items={items.filter((a) => a.status_id === status.id)}
                   onOpen={(id) => navigate(`/applications/${id}`)}
                 />
@@ -517,7 +501,17 @@ export default function ApplicationsPage() {
                     {formatDate(a.created_at)}
                   </td>
                   <td className="p-3">
-                    <Badge>{statusById.get(a.status_id)?.label ?? "—"}</Badge>
+                    {statusById.get(a.status_id) ? (
+                      <Badge variant="outline" className="gap-1.5">
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: statusById.get(a.status_id)?.color }}
+                        />
+                        {statusById.get(a.status_id)?.label}
+                      </Badge>
+                    ) : (
+                      "—"
+                    )}
                   </td>
                 </tr>
               ))}
@@ -569,7 +563,13 @@ export default function ApplicationsPage() {
                   <SelectContent>
                     {statusList.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
-                        {s.label}
+                        <span className="flex items-center gap-2">
+                          <span
+                            className="h-2 w-2 rounded-full"
+                            style={{ backgroundColor: s.color }}
+                          />
+                          {s.label}
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>

@@ -17,12 +17,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, Skeleton } from "@/components/ui/misc";
 import { api } from "@/lib/api";
 
-// Cycled by column index — statuses are HR-defined now, so there's no fixed key to key a
-// color off of. Same palette family as Applications.tsx's kanban accents.
-const COLOR_PALETTE = [
-  "#3b82f6", "#8b5cf6", "#f59e0b", "#06b6d4", "#10b981", "#ef4444", "#ec4899", "#84cc16",
-];
-
 function StatCard({
   label,
   value,
@@ -82,11 +76,11 @@ export default function DashboardPage() {
   // Ordered by the fetched status list (same order the kanban columns use), not by
   // whatever order the by_status dict's keys happen to iterate in.
   const statusData = (statuses.data ?? [])
-    .map((s, index) => ({
+    .map((s) => ({
       id: s.id,
       label: s.label,
       count: data.by_status[s.id] ?? 0,
-      color: COLOR_PALETTE[index % COLOR_PALETTE.length],
+      color: s.color,
     }))
     .filter((d) => d.count > 0);
 

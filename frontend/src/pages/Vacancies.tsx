@@ -1,5 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Briefcase, Copy, CopyPlus, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  Briefcase,
+  Copy,
+  CopyPlus,
+  ListChecks,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
@@ -22,6 +31,13 @@ import {
   DrawerContent,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { EmptyState, Label, Skeleton, Switch } from "@/components/ui/misc";
 import {
   Select,
@@ -232,43 +248,48 @@ export default function VacanciesPage() {
                 </p>
               </div>
 
-              <div className="flex shrink-0 gap-1">
-                {bot.data && vacancy.deep_link && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    title={t("vacancies.deepLink")}
-                    onClick={() => {
-                      navigator.clipboard.writeText(vacancy.deep_link!);
-                      toast.success(t("toast.linkCopied"));
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label={t("common.actions")}>
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {bot.data && vacancy.deep_link && (
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        navigator.clipboard.writeText(vacancy.deep_link!);
+                        toast.success(t("toast.linkCopied"));
+                      }}
+                    >
+                      <Copy /> {t("vacancies.deepLink")}
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuItem asChild>
+                    <Link to={`/vacancies/${vacancy.id}/questions`}>
+                      <ListChecks /> {t("vacancies.questions")}
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      setDuplicating(vacancy);
+                      setDuplicateTarget(NO_BRANCH);
                     }}
                   >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                )}
-                <Button asChild variant="ghost" size="icon" title={t("vacancies.questions")}>
-                  <Link to={`/vacancies/${vacancy.id}/questions`}>
-                    <ListChecks className="h-4 w-4" />
-                  </Link>
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title={t("vacancies.duplicate")}
-                  onClick={() => {
-                    setDuplicating(vacancy);
-                    setDuplicateTarget(NO_BRANCH);
-                  }}
-                >
-                  <CopyPlus className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => setEditing(vacancy)}>
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={() => setDeleting(vacancy)}>
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </div>
+                    <CopyPlus /> {t("vacancies.duplicate")}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setEditing(vacancy)}>
+                    <Pencil /> {t("common.edit")}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setDeleting(vacancy)}
+                  >
+                    <Trash2 /> {t("common.delete")}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </SortableRow>
           )}
         </SortableList>
