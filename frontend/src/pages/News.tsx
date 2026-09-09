@@ -161,10 +161,22 @@ export default function NewsPage() {
               </div>
 
               <div className="flex shrink-0 gap-1">
-                <Button variant="ghost" size="icon" onClick={() => setEditing(item)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t("common.edit")}
+                  aria-label={t("common.edit")}
+                  onClick={() => setEditing(item)}
+                >
                   <Pencil className="h-4 w-4" />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => setDeleting(item)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t("common.delete")}
+                  aria-label={t("common.delete")}
+                  onClick={() => setDeleting(item)}
+                >
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
               </div>

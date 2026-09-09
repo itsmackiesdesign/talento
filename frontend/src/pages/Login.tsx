@@ -1,15 +1,17 @@
 import { zodResolver } from "@hookform/resolvers/zod";
+import Button from "@mui/material/Button";
+import Link from "@mui/material/Link";
+import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
+import Typography from "@mui/material/Typography";
 import { useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { z } from "zod";
 
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/misc";
+import { AuthShell, PasswordTextField } from "@/components/auth-shell";
 import { api } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 
@@ -22,7 +24,7 @@ export default function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const setTokens = useAuth((s) => s.setTokens);
+  const setTokens = useAuth((state) => state.setTokens);
   const routeState = location.state as {
     from?: { pathname?: string; search?: string };
     email?: string;
@@ -53,52 +55,44 @@ export default function LoginPage() {
   });
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-xl">{t("auth.loginTitle")}</CardTitle>
-          <CardDescription>{t("auth.loginSubtitle")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form
-            className="space-y-4"
-            onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
-          >
-            <div className="space-y-2">
-              <Label htmlFor="email">{t("auth.email")}</Label>
-              <Input id="email" type="email" autoComplete="email" {...form.register("email")} />
-              {form.formState.errors.email && (
-                <p className="text-xs text-destructive">{t("auth.email")}</p>
-              )}
-            </div>
+    <AuthShell title={t("auth.loginTitle")} subtitle={t("auth.loginSubtitle")}>
+      <Stack
+        component="form"
+        noValidate
+        spacing={2.5}
+        onSubmit={form.handleSubmit((values) => mutation.mutate(values))}
+      >
+        <TextField
+          label={t("auth.email")}
+          type="email"
+          autoComplete="email"
+          autoFocus
+          fullWidth
+          error={Boolean(form.formState.errors.email)}
+          helperText={form.formState.errors.email
+            ? t("auth.emailInvalid", { defaultValue: "Введите корректный email" })
+            : " "}
+          {...form.register("email")}
+        />
+        <PasswordTextField
+          label={t("auth.password")}
+          autoComplete="current-password"
+          fullWidth
+          error={Boolean(form.formState.errors.password)}
+          helperText={form.formState.errors.password ? t("auth.password") : " "}
+          {...form.register("password")}
+        />
+        <Button type="submit" size="large" variant="contained" fullWidth disabled={mutation.isPending}>
+          {mutation.isPending ? t("common.loading") : t("auth.login")}
+        </Button>
+      </Stack>
 
-            <div className="space-y-2">
-              <Label htmlFor="password">{t("auth.password")}</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                {...form.register("password")}
-              />
-            </div>
-
-            <Button type="submit" className="w-full" disabled={mutation.isPending}>
-              {mutation.isPending ? t("common.loading") : t("auth.login")}
-            </Button>
-          </form>
-
-          <p className="mt-4 text-center text-sm text-muted-foreground">
-            {t("auth.noAccount")}{" "}
-            <Link
-              to="/register"
-              state={location.state}
-              className="text-primary hover:underline"
-            >
-              {t("auth.register")}
-            </Link>
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+      <Typography variant="body2" color="text.secondary" textAlign="center">
+        {t("auth.noAccount")}{" "}
+        <Link component={RouterLink} to="/register" state={location.state} fontWeight={700} underline="hover">
+          {t("auth.register")}
+        </Link>
+      </Typography>
+    </AuthShell>
   );
 }

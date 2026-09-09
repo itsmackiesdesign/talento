@@ -189,7 +189,7 @@ export default function VacanciesPage() {
       {branchList.length > 0 && (
         <div className="mb-4 max-w-xs">
           <Select value={branchFilter} onValueChange={setBranchFilter}>
-            <SelectTrigger>
+            <SelectTrigger aria-label={t("vacancies.filterByBranch")}>
               <SelectValue placeholder={t("vacancies.filterByBranch")} />
             </SelectTrigger>
             <SelectContent>
@@ -328,7 +328,7 @@ export default function VacanciesPage() {
           </DialogHeader>
 
           <Select value={duplicateTarget} onValueChange={setDuplicateTarget}>
-            <SelectTrigger>
+            <SelectTrigger aria-label={t("vacancies.branch")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -482,7 +482,7 @@ function VacancyForm({
               setEditing({ ...editing, branch_id: v === NO_BRANCH ? null : v })
             }
           >
-            <SelectTrigger>
+            <SelectTrigger aria-label={t("vacancies.branch")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -502,7 +502,7 @@ function VacancyForm({
             value={editing.status ?? "draft"}
             onValueChange={(v) => setEditing({ ...editing, status: v as VacancyStatus })}
           >
-            <SelectTrigger>
+            <SelectTrigger aria-label={t("vacancies.status")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

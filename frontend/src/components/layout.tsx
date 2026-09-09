@@ -1,210 +1,364 @@
+import AppBar from "@mui/material/AppBar";
+import Avatar from "@mui/material/Avatar";
+import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
+import Divider from "@mui/material/Divider";
+import Drawer from "@mui/material/Drawer";
+import IconButton from "@mui/material/IconButton";
+import List from "@mui/material/List";
+import ListItemButton from "@mui/material/ListItemButton";
+import ListItemIcon from "@mui/material/ListItemIcon";
+import ListItemText from "@mui/material/ListItemText";
+import Stack from "@mui/material/Stack";
+import Toolbar from "@mui/material/Toolbar";
+import Tooltip from "@mui/material/Tooltip";
+import Typography from "@mui/material/Typography";
+import { alpha, useTheme } from "@mui/material/styles";
 import {
+  Bot,
+  BriefcaseBusiness,
   Building2,
-  Briefcase,
   Inbox,
   LayoutDashboard,
-  Newspaper,
   LogOut,
   Menu,
   Moon,
+  Newspaper,
   Settings,
   ShieldCheck,
   Sun,
   WalletCards,
-  X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import type { LucideIcon } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 
-import { Button } from "@/components/ui/button";
+import { BrandLogo } from "@/components/brand-logo";
 import { LANGUAGES, setLanguage } from "@/lib/i18n";
 import type { Me } from "@/lib/types";
-import { cn } from "@/lib/utils";
 import { useAuth } from "@/store/auth";
+import { useColorMode } from "@/theme";
 
-function useTheme() {
-  const [dark, setDark] = useState(
-    () => localStorage.getItem("talento-theme") !== "light",
-  );
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem("talento-theme", dark ? "dark" : "light");
-  }, [dark]);
-  return { dark, toggle: () => setDark((d) => !d) };
-}
+const DRAWER_WIDTH = 280;
 
-const NAV = [
+const PRIMARY_NAV = [
   { to: "/", key: "dashboard", icon: LayoutDashboard, end: true },
-  { to: "/vacancies", key: "vacancies", icon: Briefcase, end: false },
-  { to: "/branches", key: "branches", icon: Building2, end: false },
-  { to: "/news", key: "news", icon: Newspaper, end: false },
-  { to: "/applications", key: "applications", icon: Inbox, end: false },
-  { to: "/settings", key: "settings", icon: Settings, end: false },
+  { to: "/applications", key: "applications", icon: Inbox },
+  { to: "/vacancies", key: "vacancies", icon: BriefcaseBusiness },
+  { to: "/bot-builder", key: "builder", icon: Bot },
+  { to: "/branches", key: "branches", icon: Building2 },
+] as const;
+
+const SECONDARY_NAV = [
+  { to: "/news", key: "news", icon: Newspaper },
+  { to: "/settings", key: "settings", icon: Settings },
 ] as const;
 
 const money = new Intl.NumberFormat("uz-UZ");
 
-export function AppLayout({ me, children }: { me: Me; children: React.ReactNode }) {
-  const { t, i18n } = useTranslation();
-  const { dark, toggle } = useTheme();
-  const navigate = useNavigate();
-  const logout = useAuth((s) => s.logout);
-  const [mobileOpen, setMobileOpen] = useState(false);
+function isPathActive(pathname: string, to: string, end?: boolean) {
+  if (end) return pathname === to;
+  return pathname === to || pathname.startsWith(`${to}/`);
+}
 
-  const company = me.companies[0];
+function NavItems({
+  items,
+  onNavigate,
+}: {
+  items: readonly {
+    to: string;
+    key: string;
+    icon: LucideIcon;
+    end?: boolean;
+  }[];
+  onNavigate: () => void;
+}) {
+  const { t } = useTranslation();
+  const { pathname } = useLocation();
 
-  const nav = (
-    <nav className="flex flex-col gap-1">
-      {NAV.map(({ to, key, icon: Icon, end }) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={end}
-          onClick={() => setMobileOpen(false)}
-          className={({ isActive }) =>
-            cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-              isActive
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-            )
-          }
-        >
-          <Icon className="h-4 w-4" />
-          {t(`nav.${key}`)}
-        </NavLink>
-      ))}
-      {me.user.is_platform_admin && (
-        <NavLink
-          to="/admin"
-          onClick={() => setMobileOpen(false)}
-          className="mt-3 flex items-center gap-3 rounded-lg border px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/10"
-        >
-          <ShieldCheck className="h-4 w-4" />
-          Platform admin
-        </NavLink>
-      )}
-    </nav>
-  );
-
-  const sidebarBody = (
-    <div className="flex h-full flex-col gap-6 p-4">
-      <div className="flex items-center justify-between">
-        <div className="min-w-0">
-          <p className="text-lg font-semibold tracking-tight">Talento</p>
-          <p className="truncate text-xs text-muted-foreground">{company?.name}</p>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="lg:hidden"
-          onClick={() => setMobileOpen(false)}
-          aria-label={t("common.close")}
-        >
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
-
-      {nav}
-
-      <div className="mt-auto space-y-3">
-        {company && me.role === "owner" && (
-          <NavLink
-            to="/billing"
-            onClick={() => setMobileOpen(false)}
-            aria-label={t("billing.title")}
-            className={({ isActive }) =>
-              cn(
-                "group flex items-center gap-3 rounded-xl border border-primary/40 bg-primary/10 p-3 shadow-sm transition-colors hover:bg-primary/15",
-                isActive && "ring-1 ring-primary/50",
-              )
-            }
+  return (
+    <List disablePadding sx={{ px: 2 }}>
+      {items.map(({ to, key, icon: Icon, end }) => {
+        const selected = isPathActive(pathname, to, end);
+        return (
+          <ListItemButton
+            key={to}
+            component={Link}
+            to={to}
+            aria-current={selected ? "page" : undefined}
+            selected={selected}
+            onClick={onNavigate}
+            sx={{
+              minHeight: 46,
+              mb: 0.5,
+              px: 1.5,
+              borderRadius: 1,
+              color: selected ? "primary.main" : "text.secondary",
+              "&.Mui-selected": {
+                color: "primary.main",
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.1),
+                "&:hover": { bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16) },
+              },
+            }}
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/30 bg-primary/15 text-primary transition-colors group-hover:bg-primary/20">
-              <WalletCards className="h-5 w-5" />
-            </span>
-            <span className="min-w-0">
-              <span className="block text-xs font-medium text-primary">
+            <ListItemIcon sx={{ minWidth: 38, color: "inherit" }}>
+              <Icon size={20} />
+            </ListItemIcon>
+            <ListItemText
+              primary={t(`nav.${key}`, { defaultValue: key === "builder" ? "Конструктор" : key })}
+              primaryTypographyProps={{ variant: "body2", fontWeight: selected ? 700 : 600 }}
+            />
+          </ListItemButton>
+        );
+      })}
+    </List>
+  );
+}
+
+export function AppLayout({ me, children }: { me: Me; children: React.ReactNode }) {
+  const theme = useTheme();
+  const { t, i18n } = useTranslation();
+  const { mode, toggleMode } = useColorMode();
+  const navigate = useNavigate();
+  const logout = useAuth((state) => state.logout);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const company = me.companies[0];
+  const themeActionLabel = mode === "dark"
+    ? t("common.lightTheme", { defaultValue: "Светлая тема" })
+    : t("common.darkTheme", { defaultValue: "Тёмная тема" });
+
+  const closeMobileNav = () => setMobileOpen(false);
+
+  const drawerContent = (
+    <Stack sx={{ height: "100%" }}>
+      <Toolbar sx={{ minHeight: "80px !important", px: 3.5 }}>
+        <Link to="/" onClick={closeMobileNav} aria-label="talento" style={{ textDecoration: "none" }}>
+          <BrandLogo />
+        </Link>
+      </Toolbar>
+
+      <Box sx={{ px: 3, pb: 2 }}>
+        <Typography variant="caption" color="text.secondary" noWrap>
+          {t("settings.tabCompany")}
+        </Typography>
+        <Typography variant="subtitle2" noWrap sx={{ mt: 0.25 }}>
+          {company?.name}
+        </Typography>
+      </Box>
+
+      <Typography variant="overline" color="text.disabled" sx={{ px: 3.5, pt: 1, pb: 1 }}>
+        {t("nav.workspace", { defaultValue: "Рабочее пространство" })}
+      </Typography>
+      <NavItems items={PRIMARY_NAV} onNavigate={closeMobileNav} />
+
+      <Typography variant="overline" color="text.disabled" sx={{ px: 3.5, pt: 3, pb: 1 }}>
+        {t("nav.management", { defaultValue: "Управление" })}
+      </Typography>
+      <NavItems items={SECONDARY_NAV} onNavigate={closeMobileNav} />
+
+      {me.user.is_platform_admin && (
+        <List disablePadding sx={{ px: 2, mt: 0.5 }}>
+          <ListItemButton
+            component={Link}
+            to="/admin"
+            onClick={closeMobileNav}
+            sx={{ minHeight: 46, px: 1.5, borderRadius: 1, color: "primary.main" }}
+          >
+            <ListItemIcon sx={{ minWidth: 38, color: "inherit" }}>
+              <ShieldCheck size={20} />
+            </ListItemIcon>
+            <ListItemText
+              primary="Platform admin"
+              primaryTypographyProps={{ variant: "body2", fontWeight: 700 }}
+            />
+          </ListItemButton>
+        </List>
+      )}
+
+      <Box sx={{ flexGrow: 1 }} />
+
+      {company && me.role === "owner" && (
+        <Box sx={{ px: 2, pb: 1 }}>
+          <Box
+            component={Link}
+            to="/billing"
+            onClick={closeMobileNav}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1.5,
+              p: 1.5,
+              color: "text.primary",
+              textDecoration: "none",
+              borderRadius: 1.5,
+              bgcolor: (value) => alpha(value.palette.primary.main, 0.08),
+              border: (value) => `1px solid ${alpha(value.palette.primary.main, 0.18)}`,
+              transition: theme.transitions.create(["background-color", "box-shadow"]),
+              "&:hover": {
+                bgcolor: (value) => alpha(value.palette.primary.main, 0.14),
+                boxShadow: `0 8px 20px ${alpha(theme.palette.primary.main, 0.1)}`,
+              },
+            }}
+          >
+            <Avatar sx={{ width: 40, height: 40, bgcolor: "primary.main" }}>
+              <WalletCards size={20} />
+            </Avatar>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="caption" color="primary.main" fontWeight={700}>
                 {t("billing.balance")}
-              </span>
-              <span className="mt-0.5 block truncate text-base font-semibold tabular-nums tracking-tight">
+              </Typography>
+              <Typography variant="subtitle2" noWrap sx={{ fontVariantNumeric: "tabular-nums" }}>
                 {company.billing_mode === "unlimited"
                   ? t("billing.unlimited")
                   : `${money.format(company.balance_uzs)} UZS`}
-              </span>
-            </span>
-          </NavLink>
-        )}
+              </Typography>
+            </Box>
+          </Box>
+        </Box>
+      )}
 
-        <div className="flex gap-1">
-          {LANGUAGES.map((lang) => (
+      <Divider sx={{ borderStyle: "dashed" }} />
+
+      <Box sx={{ p: 2 }}>
+        <Stack direction="row" spacing={0.5} sx={{ mb: 1.5 }}>
+          {LANGUAGES.map((language) => (
             <Button
-              key={lang.code}
-              variant={i18n.language === lang.code ? "secondary" : "ghost"}
-              size="sm"
-              className="flex-1 px-1 text-xs"
-              onClick={() => setLanguage(lang.code)}
+              key={language.code}
+              size="small"
+              variant={i18n.language === language.code ? "contained" : "text"}
+              onClick={() => setLanguage(language.code)}
+              sx={{ flex: 1, minWidth: 0 }}
             >
-              {lang.code.toUpperCase()}
+              {language.code.toUpperCase()}
             </Button>
           ))}
-        </div>
+        </Stack>
 
-        <div className="flex items-center justify-between rounded-lg border p-2">
-          <div className="min-w-0">
-            <p className="truncate text-xs font-medium">{me.user.full_name}</p>
-            <p className="truncate text-xs text-muted-foreground">{me.user.email}</p>
-          </div>
-          <div className="flex shrink-0">
-            <Button variant="ghost" size="icon" onClick={toggle} aria-label="Theme">
-              {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
+        <Stack direction="row" alignItems="center" spacing={1.25}>
+          <Avatar
+            sx={{ width: 38, height: 38, bgcolor: "primary.main", fontSize: 15, fontWeight: 700 }}
+          >
+            {me.user.full_name.trim().slice(0, 1).toUpperCase()}
+          </Avatar>
+          <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+            <Typography variant="subtitle2" noWrap>{me.user.full_name}</Typography>
+            <Typography variant="caption" color="text.secondary" noWrap display="block">
+              {me.user.email}
+            </Typography>
+          </Box>
+          <Tooltip title={themeActionLabel}>
+            <IconButton size="small" onClick={toggleMode} aria-label={themeActionLabel}>
+              {mode === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            </IconButton>
+          </Tooltip>
+          <Tooltip title={t("nav.logout")}>
+            <IconButton
+              size="small"
               aria-label={t("nav.logout")}
               onClick={() => {
                 logout();
                 navigate("/login");
               }}
             >
-              <LogOut className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
-      </div>
-    </div>
+              <LogOut size={18} />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      </Box>
+    </Stack>
   );
 
   return (
-    <div className="min-h-screen lg:grid lg:grid-cols-[16rem_1fr]">
-      <aside className="sticky top-0 hidden h-screen border-r lg:block">{sidebarBody}</aside>
+    <Box sx={{ display: { lg: "flex" }, minHeight: "100dvh" }}>
+      <Box component="nav" sx={{ width: { lg: DRAWER_WIDTH }, flexShrink: { lg: 0 } }}>
+        <Drawer
+          variant="temporary"
+          open={mobileOpen}
+          onClose={closeMobileNav}
+          ModalProps={{ keepMounted: true }}
+          PaperProps={{ sx: { width: DRAWER_WIDTH } }}
+          sx={{ display: { xs: "block", lg: "none" } }}
+        >
+          {drawerContent}
+        </Drawer>
+        <Drawer
+          variant="permanent"
+          open
+          PaperProps={{
+            sx: {
+              width: DRAWER_WIDTH,
+              borderRight: `1px dashed ${theme.palette.divider}`,
+              bgcolor: "background.paper",
+            },
+          }}
+          sx={{ display: { xs: "none", lg: "block" } }}
+        >
+          {drawerContent}
+        </Drawer>
+      </Box>
 
-      {/* Mobile: the same sidebar as an overlay drawer. */}
-      {mobileOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/60 lg:hidden"
-            onClick={() => setMobileOpen(false)}
-          />
-          <aside className="fixed inset-y-0 left-0 z-50 w-64 border-r bg-background lg:hidden">
-            {sidebarBody}
-          </aside>
-        </>
-      )}
+      <AppBar
+        elevation={0}
+        color="transparent"
+        sx={{
+          width: { lg: `calc(100% - ${DRAWER_WIDTH}px)` },
+          ml: { lg: `${DRAWER_WIDTH}px` },
+          borderBottom: { xs: `1px dashed ${theme.palette.divider}`, lg: 0 },
+          bgcolor: alpha(theme.palette.background.default, 0.88),
+          backdropFilter: "blur(12px)",
+        }}
+      >
+        <Toolbar
+          sx={{
+            minHeight: { xs: "64px !important", lg: "80px !important" },
+            px: { xs: 2, lg: 5 },
+          }}
+        >
+          <IconButton
+            onClick={() => setMobileOpen(true)}
+            aria-label={t("common.openMenu", { defaultValue: "Открыть меню" })}
+            sx={{ display: { lg: "none" }, mr: 1 }}
+          >
+            <Menu size={22} />
+          </IconButton>
+          <Box sx={{ display: { xs: "block", lg: "none" } }}><BrandLogo /></Box>
+          <Box sx={{ flexGrow: 1 }} />
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ display: { xs: "none", sm: "block" }, mr: 1 }}
+          >
+            {company?.name}
+          </Typography>
+          <Tooltip title={themeActionLabel}>
+            <IconButton onClick={toggleMode} aria-label={themeActionLabel}>
+              {mode === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+            </IconButton>
+          </Tooltip>
+          <Avatar
+            sx={{ ml: 1, width: 38, height: 38, bgcolor: "primary.main", fontSize: 14, fontWeight: 700 }}
+          >
+            {me.user.full_name.trim().slice(0, 1).toUpperCase()}
+          </Avatar>
+        </Toolbar>
+      </AppBar>
 
-      <div className="flex min-w-0 flex-col">
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur lg:hidden">
-          <Button variant="ghost" size="icon" onClick={() => setMobileOpen(true)} aria-label="Menu">
-            <Menu className="h-5 w-5" />
-          </Button>
-          <span className="font-semibold">Talento</span>
-        </header>
-
-        <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
-      </div>
-    </div>
+      <Box
+        component="main"
+        id="main-content"
+        sx={{
+          flexGrow: 1,
+          minWidth: 0,
+          width: { lg: `calc(100% - ${DRAWER_WIDTH}px)` },
+          pt: { xs: 10, lg: 12 },
+          pb: { xs: 5, lg: 8 },
+          px: { xs: 2, sm: 3, lg: 5 },
+        }}
+      >
+        <Box sx={{ width: "100%", maxWidth: 1440, mx: "auto" }}>{children}</Box>
+      </Box>
+    </Box>
   );
 }
 
@@ -218,12 +372,22 @@ export function PageHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
-      </div>
-      {action}
-    </div>
+    <Stack
+      direction={{ xs: "column", sm: "row" }}
+      alignItems={{ xs: "stretch", sm: "flex-start" }}
+      justifyContent="space-between"
+      spacing={2}
+      sx={{ mb: { xs: 3, md: 5 } }}
+    >
+      <Box>
+        <Typography component="h1" variant="h4">{title}</Typography>
+        {description && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, maxWidth: 720 }}>
+            {description}
+          </Typography>
+        )}
+      </Box>
+      {action && <Box sx={{ flexShrink: 0 }}>{action}</Box>}
+    </Stack>
   );
 }

@@ -56,7 +56,7 @@ export function SortableRow({
     >
       <button
         type="button"
-        className="cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+        className="grid h-11 w-11 shrink-0 cursor-grab touch-none place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
         aria-label="Переместить"
         {...attributes}
         {...listeners}

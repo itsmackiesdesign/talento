@@ -170,6 +170,7 @@ export default function BranchesPage() {
                     variant="ghost"
                     size="icon"
                     title={t("branches.deepLink")}
+                    aria-label={t("branches.deepLink")}
                     onClick={() => {
                       const link = `https://t.me/${bot.data!.bot_username}?start=branch_${branch.id.replaceAll("-", "")}`;
                       navigator.clipboard.writeText(link);
@@ -179,10 +180,22 @@ export default function BranchesPage() {
                     <Copy className="h-4 w-4" />
                   </Button>
                 )}
-                <Button variant="ghost" size="icon" onClick={() => setEditing(branch)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t("common.edit")}
+                  aria-label={t("common.edit")}
+                  onClick={() => setEditing(branch)}
+                >
                   <Pencil className="h-4 w-4" />
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => setDeleting(branch)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t("common.delete")}
+                  aria-label={t("common.delete")}
+                  onClick={() => setDeleting(branch)}
+                >
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
               </div>
@@ -222,7 +235,7 @@ export default function BranchesPage() {
           </DialogHeader>
 
           <Select value={moveTarget} onValueChange={setMoveTarget}>
-            <SelectTrigger>
+            <SelectTrigger aria-label={t("branches.moveTo")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

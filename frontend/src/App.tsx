@@ -1,37 +1,51 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
+import Box from "@mui/material/Box";
+import Skeleton from "@mui/material/Skeleton";
+import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { AppLayout } from "@/components/layout";
-import { Skeleton } from "@/components/ui/misc";
 import { api } from "@/lib/api";
 import { useAuth } from "@/store/auth";
 
-import ApplicationsPage from "@/pages/Applications";
-import { AdminAccessDenied, AdminHomePage, AdminTenantPage } from "@/pages/Admin";
-import BranchesPage from "@/pages/Branches";
-import BillingPage from "@/pages/Billing";
-import DashboardPage from "@/pages/Dashboard";
-import LandingPage from "@/pages/Landing";
-import InvitePage from "@/pages/Invite";
-import LoginPage from "@/pages/Login";
-import NewsPage from "@/pages/News";
-import OnboardingPage from "@/pages/Onboarding";
-import QuestionsPage from "@/pages/Questions";
-import RegisterPage from "@/pages/Register";
-import SettingsPage from "@/pages/Settings";
-import VacanciesPage from "@/pages/Vacancies";
+const ApplicationsPage = lazy(() => import("@/pages/Applications"));
+const BranchesPage = lazy(() => import("@/pages/Branches"));
+const BillingPage = lazy(() => import("@/pages/Billing"));
+const BotBuilderPage = lazy(() => import("@/pages/BotBuilder"));
+const DashboardPage = lazy(() => import("@/pages/Dashboard"));
+const LandingPage = lazy(() => import("@/pages/Landing"));
+const InvitePage = lazy(() => import("@/pages/Invite"));
+const LoginPage = lazy(() => import("@/pages/Login"));
+const NewsPage = lazy(() => import("@/pages/News"));
+const OnboardingPage = lazy(() => import("@/pages/Onboarding"));
+const QuestionsPage = lazy(() => import("@/pages/Questions"));
+const RegisterPage = lazy(() => import("@/pages/Register"));
+const SettingsPage = lazy(() => import("@/pages/Settings"));
+const VacanciesPage = lazy(() => import("@/pages/Vacancies"));
+const AdminAccessDenied = lazy(() => import("@/pages/Admin").then((module) => ({ default: module.AdminAccessDenied })));
+const AdminHomePage = lazy(() => import("@/pages/Admin").then((module) => ({ default: module.AdminHomePage })));
+const AdminTenantPage = lazy(() => import("@/pages/Admin").then((module) => ({ default: module.AdminTenantPage })));
 
 function FullPageLoader() {
   return (
-    <div className="flex min-h-screen items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-3">
-        <Skeleton className="h-8 w-1/2" />
-        <Skeleton className="h-32 w-full" />
-        <Skeleton className="h-32 w-full" />
-      </div>
-    </div>
+    <Box sx={{ minHeight: "100dvh", display: "grid", placeItems: "center", p: 3 }}>
+      <Box sx={{ width: "100%", maxWidth: 480 }}>
+        <Skeleton variant="text" width="52%" height={44} />
+        <Skeleton variant="rounded" height={132} sx={{ mt: 2 }} />
+        <Skeleton variant="rounded" height={132} sx={{ mt: 2 }} />
+      </Box>
+    </Box>
   );
+}
+
+function ScrollToTop() {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
+  return null;
 }
 
 /** Gate for everything behind login. Also routes users with no company into onboarding —
@@ -88,7 +102,9 @@ export default function App() {
   const accessToken = useAuth((s) => s.accessToken);
 
   return (
-    <Routes>
+    <Suspense fallback={<FullPageLoader />}>
+      <ScrollToTop />
+      <Routes>
       <Route
         path="/login"
         element={accessToken ? <Navigate to="/" replace /> : <LoginPage />}
@@ -114,6 +130,7 @@ export default function App() {
         element={accessToken ? <RequireCompany><DashboardPage /></RequireCompany> : <LandingPage />}
       />
       <Route path="/branches" element={<RequireCompany><BranchesPage /></RequireCompany>} />
+      <Route path="/bot-builder" element={<RequireCompany><BotBuilderPage /></RequireCompany>} />
       <Route path="/vacancies" element={<RequireCompany><VacanciesPage /></RequireCompany>} />
       <Route
         path="/vacancies/:id/questions"
@@ -131,7 +148,8 @@ export default function App() {
       />
       <Route path="/settings" element={<RequireCompany><SettingsPage /></RequireCompany>} />
 
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
   );
 }

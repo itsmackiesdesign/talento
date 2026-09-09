@@ -377,7 +377,7 @@ export default function ApplicationsPage() {
           onChange={(e) => setSearch(e.target.value)}
         />
         <Select value={vacancyFilter} onValueChange={selectVacancy}>
-          <SelectTrigger>
+          <SelectTrigger aria-label={t("applications.vacancy")}>
             <SelectValue placeholder={t("applications.vacancy")} />
           </SelectTrigger>
           <SelectContent>
@@ -390,7 +390,7 @@ export default function ApplicationsPage() {
           </SelectContent>
         </Select>
         <Select value={branchFilter} onValueChange={setBranchFilter}>
-          <SelectTrigger>
+          <SelectTrigger aria-label={t("applications.branch")}>
             <SelectValue placeholder={t("applications.branch")} />
           </SelectTrigger>
           <SelectContent>
@@ -403,7 +403,12 @@ export default function ApplicationsPage() {
             ))}
           </SelectContent>
         </Select>
-        <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        <Input
+          type="date"
+          aria-label={t("applications.date")}
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+        />
       </div>
 
       {/* Only shown once a single vacancy is picked — that's what fixes which questions
@@ -423,7 +428,7 @@ export default function ApplicationsPage() {
                 })
               }
             >
-              <SelectTrigger>
+              <SelectTrigger aria-label={questionTextToPlainText(q.text)}>
                 <SelectValue placeholder={q.text} />
               </SelectTrigger>
               <SelectContent>
@@ -482,7 +487,16 @@ export default function ApplicationsPage() {
                 <tr
                   key={a.id}
                   className="cursor-pointer border-b last:border-0 hover:bg-accent/50"
+                  role="link"
+                  tabIndex={0}
+                  aria-label={`${a.candidate_name} — ${a.vacancy_title}`}
                   onClick={() => navigate(`/applications/${a.id}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      navigate(`/applications/${a.id}`);
+                    }
+                  }}
                 >
                   <td className="p-3 font-medium">
                     <div className="flex items-center gap-2">
@@ -557,7 +571,7 @@ export default function ApplicationsPage() {
                     setStatus.mutate({ id: detail.data!.id, statusId: v })
                   }
                 >
-                  <SelectTrigger className="w-44">
+                  <SelectTrigger className="w-44" aria-label={t("applications.status")}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

@@ -48,7 +48,7 @@ export function LanguageTabs({
           type="button"
           onClick={() => onChange(lang)}
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium transition-colors",
+            "inline-flex min-h-11 touch-manipulation items-center gap-1.5 rounded-md px-3 py-1 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             active === lang
               ? "bg-background text-foreground shadow"
               : "text-muted-foreground hover:text-foreground",

@@ -408,7 +408,7 @@ export default function QuestionsPage() {
                     });
                   }}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger aria-label={t("questions.type")}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -508,7 +508,7 @@ export default function QuestionsPage() {
                       })
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger aria-label={t("questions.datetimeMask")}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

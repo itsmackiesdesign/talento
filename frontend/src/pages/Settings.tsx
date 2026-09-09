@@ -399,7 +399,7 @@ function CompanyTab() {
                 });
               }}
             >
-              <SelectTrigger className="max-w-xs">
+              <SelectTrigger className="max-w-xs" aria-label={t("languages.default")}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -591,6 +591,7 @@ function TeamTab() {
                       size="icon"
                       className="text-destructive"
                       title={t("settings.removeMember")}
+                      aria-label={t("settings.removeMember")}
                       onClick={() => setConfirmAction({ kind: "remove", member })}
                     >
                       <UserMinus className="h-4 w-4" />
@@ -635,6 +636,7 @@ function TeamTab() {
                     size="icon"
                     className="text-destructive"
                     title={t("settings.revokeInvite")}
+                    aria-label={t("settings.revokeInvite")}
                     disabled={revoke.isPending}
                     onClick={() => revoke.mutate(invitation.id)}
                   >
@@ -664,7 +666,12 @@ function TeamTab() {
               <Label htmlFor="invite-link">{t("settings.inviteLink")}</Label>
               <div className="flex gap-2">
                 <Input id="invite-link" value={inviteLink} readOnly />
-                <Button size="icon" onClick={() => copyInvite(inviteLink)}>
+                <Button
+                  size="icon"
+                  title={t("common.copy")}
+                  aria-label={t("common.copy")}
+                  onClick={() => copyInvite(inviteLink)}
+                >
                   <Copy className="h-4 w-4" />
                 </Button>
               </div>
@@ -800,6 +807,8 @@ function NotificationsTab() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    title={t("common.copy")}
+                    aria-label={t("common.copy")}
                     onClick={() => {
                       navigator.clipboard.writeText(`/link ${code.data!.code}`);
                       toast.success(t("common.copied"));
@@ -972,7 +981,13 @@ function StatusesTab() {
             {newRow && (
               <div className="flex items-center gap-3 rounded-lg border bg-card p-3">
                 <StatusRowBody row={newRow} t={t} />
-                <Button variant="ghost" size="icon" onClick={() => setEditing(newRow)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t("common.edit")}
+                  aria-label={t("common.edit")}
+                  onClick={() => setEditing(newRow)}
+                >
                   <Pencil className="h-4 w-4" />
                 </Button>
               </div>
@@ -983,10 +998,22 @@ function StatusesTab() {
                 <SortableRow key={row.id} id={row.id}>
                   <StatusRowBody row={row} t={t} />
                   <div className="flex shrink-0 gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => setEditing(row)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title={t("common.edit")}
+                      aria-label={t("common.edit")}
+                      onClick={() => setEditing(row)}
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => openDelete(row)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      title={t("common.delete")}
+                      aria-label={t("common.delete")}
+                      onClick={() => openDelete(row)}
+                    >
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   </div>
@@ -997,7 +1024,13 @@ function StatusesTab() {
             {terminalRows.map((row) => (
               <div key={row.id} className="flex items-center gap-3 rounded-lg border bg-card p-3">
                 <StatusRowBody row={row} t={t} />
-                <Button variant="ghost" size="icon" onClick={() => setEditing(row)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title={t("common.edit")}
+                  aria-label={t("common.edit")}
+                  onClick={() => setEditing(row)}
+                >
                   <Pencil className="h-4 w-4" />
                 </Button>
               </div>
@@ -1049,7 +1082,7 @@ function StatusesTab() {
           </DialogHeader>
 
           <Select value={moveTarget} onValueChange={setMoveTarget}>
-            <SelectTrigger>
+            <SelectTrigger aria-label={t("statuses.moveTo")}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

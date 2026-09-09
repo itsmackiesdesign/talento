@@ -161,7 +161,7 @@ export function AdminHomePage() {
                 setStatus(value);
               }}
             >
-              <SelectTrigger className="w-full sm:w-36">
+              <SelectTrigger className="w-full sm:w-36" aria-label="Tenant state">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -423,7 +423,7 @@ export function AdminTenantPage() {
                       setBillingMode(value)
                     }
                   >
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label="Billing mode"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="unlimited">Unlimited</SelectItem>
                       <SelectItem value="pay_per_application">Pay per application</SelectItem>
