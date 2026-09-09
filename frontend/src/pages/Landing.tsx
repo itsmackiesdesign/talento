@@ -18,7 +18,6 @@ import {
   Phone,
   Send,
   ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -217,7 +216,6 @@ function Hero() {
       <div className="mx-auto grid max-w-7xl items-center gap-16 px-6 lg:grid-cols-[1.1fr_0.9fr] lg:gap-10 lg:px-8">
         <div>
           <div className="tl-anim-in tl-font-mono mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] uppercase tracking-wide text-[var(--tl-muted)]">
-            <Sparkles className="h-3 w-3 text-[var(--tl-lime)]" />
             {t("landing.hero.badge")}
           </div>
 
