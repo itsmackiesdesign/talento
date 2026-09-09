@@ -29,6 +29,8 @@ from app.schemas import (
     ApplicationDetail,
     ApplicationListItem,
     ApplicationPage,
+    BulkStatusUpdate,
+    BulkStatusUpdateResult,
     CommentCreate,
     CommentOut,
     StatusHistoryOut,
@@ -331,6 +333,7 @@ async def export_applications(
     branch_id: Annotated[str | None, Query()] = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    search: Annotated[str | None, Query(description="Name, @username or phone")] = None,
     answers: Annotated[str | None, Query(description="JSON object {question_id: value}")] = None,
     export_format: Annotated[str, Query(alias="format")] = "csv",
 ) -> Response:
@@ -350,7 +353,7 @@ async def export_applications(
         branch_id,
         date_from,
         date_to,
-        None,
+        search,
         answers,
     )
     rows = (await db.execute(stmt.order_by(Application.created_at.desc()))).all()
@@ -406,6 +409,68 @@ async def _load_owned(db: AsyncSession, application_id: uuid.UUID, company_id: u
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Application not found")
     return row
+
+
+@router.patch("/bulk/status", response_model=BulkStatusUpdateResult)
+async def bulk_update_status(
+    payload: BulkStatusUpdate,
+    company: CurrentCompany,
+    user: CurrentUser,
+    db: DB,
+) -> BulkStatusUpdateResult:
+    """Move up to 100 applications in one all-or-nothing transaction.
+
+    Locking the selected rows keeps concurrent recruiter actions from producing a history
+    entry whose ``from`` stage no longer matches the status that was actually changed.
+    Missing or foreign application ids reject the whole request rather than partially
+    updating the visible selection.
+    """
+    application_ids = list(dict.fromkeys(payload.application_ids))
+    target = await get_owned_or_404(db, ApplicationStatus, payload.status_id, company.id)
+    rows = (
+        await db.execute(
+            select(Application, ApplicationStatus)
+            .join(ApplicationStatus, ApplicationStatus.id == Application.status_id)
+            .where(
+                Application.company_id == company.id,
+                Application.id.in_(application_ids),
+            )
+            # Lock only candidate applications. Locking the joined status rows would
+            # unnecessarily serialize unrelated recruiters moving candidates from the
+            # same stage.
+            .with_for_update(of=Application)
+        )
+    ).all()
+
+    if len(rows) != len(application_ids):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "One or more applications not found")
+
+    notifications: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = []
+    for application, current_status in rows:
+        if application.status_id == target.id:
+            continue
+        application.status_id = target.id
+        db.add(
+            ApplicationStatusHistory(
+                application_id=application.id,
+                from_status_id=current_status.id,
+                to_status_id=target.id,
+                from_status_label=current_status.label,
+                to_status_label=target.label,
+                changed_by=user.id,
+            )
+        )
+        notifications.append((application.id, current_status.id, target.id))
+
+    await db.commit()
+    for transition in notifications:
+        _enqueue_candidate_notification(*transition)
+
+    return BulkStatusUpdateResult(
+        requested=len(application_ids),
+        updated=len(notifications),
+        unchanged=len(application_ids) - len(notifications),
+    )
 
 
 @router.get("/{application_id}", response_model=ApplicationDetail)

@@ -624,6 +624,17 @@ class StatusUpdate(BaseModel):
     status_id: uuid.UUID
 
 
+class BulkStatusUpdate(BaseModel):
+    application_ids: Annotated[list[uuid.UUID], Field(min_length=1, max_length=100)]
+    status_id: uuid.UUID
+
+
+class BulkStatusUpdateResult(BaseModel):
+    requested: int
+    updated: int
+    unchanged: int
+
+
 # --------------------------------------------------------------------------- application statuses
 
 

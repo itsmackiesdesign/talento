@@ -18,6 +18,7 @@ import type {
   ApplicationDetail,
   ApplicationPage,
   ApplicationStatusOut,
+  BulkStatusUpdateResult,
   Bot,
   Branch,
   Comment,
@@ -286,6 +287,11 @@ export const api = {
     get: (id: string) => get<ApplicationDetail>(`/applications/${id}`),
     setStatus: (id: string, statusId: string) =>
       patch<ApplicationDetail>(`/applications/${id}/status`, { status_id: statusId }),
+    bulkSetStatus: (applicationIds: string[], statusId: string) =>
+      patch<BulkStatusUpdateResult>("/applications/bulk/status", {
+        application_ids: applicationIds,
+        status_id: statusId,
+      }),
     comment: (id: string, text: string) =>
       post<Comment>(`/applications/${id}/comments`, { text }),
     remove: (id: string) => del<void>(`/applications/${id}`),

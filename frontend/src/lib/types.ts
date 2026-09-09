@@ -220,6 +220,7 @@ export interface Answer {
   type: QuestionType;
   answer: string | string[] | null;
   skipped: boolean;
+  file_url?: string | null;
 }
 
 export interface ApplicationListItem {
@@ -263,6 +264,12 @@ export interface ApplicationPage {
   total: number;
   page: number;
   page_size: number;
+}
+
+export interface BulkStatusUpdateResult {
+  requested: number;
+  updated: number;
+  unchanged: number;
 }
 
 export interface DashboardStats {

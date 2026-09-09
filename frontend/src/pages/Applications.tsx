@@ -8,11 +8,44 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
+import Box from "@mui/material/Box";
+import Card from "@mui/material/Card";
+import CardContent from "@mui/material/CardContent";
+import Checkbox from "@mui/material/Checkbox";
+import Chip from "@mui/material/Chip";
+import CircularProgress from "@mui/material/CircularProgress";
+import InputAdornment from "@mui/material/InputAdornment";
+import MenuItem from "@mui/material/MenuItem";
+import Pagination from "@mui/material/Pagination";
+import Paper from "@mui/material/Paper";
+import Stack from "@mui/material/Stack";
+import Table from "@mui/material/Table";
+import TableBody from "@mui/material/TableBody";
+import TableCell from "@mui/material/TableCell";
+import TableContainer from "@mui/material/TableContainer";
+import TableHead from "@mui/material/TableHead";
+import TableRow from "@mui/material/TableRow";
+import TextField from "@mui/material/TextField";
+import ToggleButton from "@mui/material/ToggleButton";
+import ToggleButtonGroup from "@mui/material/ToggleButtonGroup";
+import Typography from "@mui/material/Typography";
+import MuiButton from "@mui/material/Button";
+import { alpha, useTheme } from "@mui/material/styles";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, ExternalLink, Inbox, KanbanSquare, Table2, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  Download,
+  ExternalLink,
+  FileText,
+  FilterX,
+  Inbox,
+  KanbanSquare,
+  Search,
+  Table2,
+  Trash2,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/layout";
@@ -27,7 +60,7 @@ import {
   DialogTitle,
   DrawerContent,
 } from "@/components/ui/dialog";
-import { Input, Textarea } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/input";
 import { EmptyState, Label, Separator, Skeleton } from "@/components/ui/misc";
 import {
   Select,
@@ -37,10 +70,36 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, downloadExport } from "@/lib/api";
-import type { ApplicationListItem, ApplicationStatusOut } from "@/lib/types";
+import type {
+  Answer,
+  ApplicationListItem,
+  ApplicationPage,
+  ApplicationStatusOut,
+} from "@/lib/types";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 
 const ALL = "__all__";
+const PAGE_SIZE = 25;
+
+function parseAnswerFilters(value: string | null): Record<string, string> {
+  if (!value) return {};
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      Object.entries(parsed).every(
+        ([key, answer]) => key.length > 0 && typeof answer === "string",
+      )
+    ) {
+      return parsed as Record<string, string>;
+    }
+  } catch {
+    // Invalid shared URLs degrade to an unfiltered list instead of breaking the page.
+  }
+  return {};
+}
 
 function questionTextToPlainText(value: string): string {
   const withoutMarkdown = value
@@ -99,6 +158,56 @@ function CandidateAvatar({
       {initials}
     </span>
   );
+}
+
+function ApplicationStatusChip({ status }: { status?: ApplicationStatusOut }) {
+  if (!status) return <Typography color="text.secondary">—</Typography>;
+  return (
+    <Chip
+      size="small"
+      label={status.label}
+      sx={{
+        color: status.color,
+        bgcolor: alpha(status.color, 0.1),
+        border: `1px solid ${alpha(status.color, 0.22)}`,
+        "&::before": {
+          content: '""',
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          bgcolor: status.color,
+          ml: 1,
+        },
+      }}
+    />
+  );
+}
+
+function AnswerValue({ answer }: { answer: Answer }) {
+  const { t } = useTranslation();
+  if (answer.skipped || answer.answer === null) {
+    return <span className="text-muted-foreground">{t("applications.skipped")}</span>;
+  }
+
+  const value = Array.isArray(answer.answer) ? answer.answer.join(", ") : answer.answer;
+  const fileUrl = answer.file_url || (answer.type === "file" && /^https?:\/\//.test(value) ? value : null);
+  if (answer.type === "file" && fileUrl) {
+    return (
+      <MuiButton
+        component="a"
+        href={fileUrl}
+        target="_blank"
+        rel="noreferrer"
+        variant="outlined"
+        size="small"
+        startIcon={<FileText size={16} />}
+      >
+        {t("applications.openFile")}
+      </MuiButton>
+    );
+  }
+
+  return <>{value}</>;
 }
 
 function CandidateCard({
@@ -180,7 +289,7 @@ function KanbanColumn({
     <div
       ref={setNodeRef}
       className={cn(
-        "flex w-64 shrink-0 flex-col gap-2 rounded-xl border border-t-2 bg-muted/40 p-2 transition-colors",
+        "flex w-full shrink-0 flex-col gap-2 rounded-xl border border-t-2 bg-muted/40 p-2 transition-colors sm:w-64",
         isOver && "bg-accent",
       )}
       style={{ borderTopColor: status.color }}
@@ -204,33 +313,107 @@ function KanbanColumn({
 
 export default function ApplicationsPage() {
   const { t } = useTranslation();
+  const theme = useTheme();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { id: routeId } = useParams<{ id: string }>();
 
-  const [view, setView] = useState<"kanban" | "table">("kanban");
-  const [vacancyFilter, setVacancyFilter] = useState(ALL);
-  const [branchFilter, setBranchFilter] = useState(ALL);
-  const [search, setSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
+  const querySearch = searchParams.get("q") ?? "";
+  const [search, setSearch] = useState(querySearch);
+  const view = searchParams.get("view") === "kanban" ? "kanban" : "table";
+  const vacancyFilter = searchParams.get("vacancy") ?? ALL;
+  const branchFilter = searchParams.get("branch") ?? ALL;
+  const statusFilter = searchParams.get("status") ?? ALL;
+  const dateFrom = searchParams.get("from") ?? "";
+  const dateTo = searchParams.get("to") ?? "";
+  const rawPage = Number.parseInt(searchParams.get("page") ?? "1", 10);
+  const page = Number.isFinite(rawPage) && rawPage > 0 ? rawPage : 1;
+  const answerFiltersParam = searchParams.get("answers");
+  const answerFilters = useMemo(
+    () => parseAnswerFilters(answerFiltersParam),
+    [answerFiltersParam],
+  );
   const [comment, setComment] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
-  // question_id -> chosen option, e.g. "is a student?" -> "Да". Only meaningful once a
-  // single vacancy is picked, since that's what determines which questions even exist.
-  const [answerFilters, setAnswerFilters] = useState<Record<string, string>>({});
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkStatus, setBulkStatus] = useState(ALL);
 
-  function selectVacancy(v: string) {
-    setVacancyFilter(v);
-    setAnswerFilters({});
-  }
+  const updateParams = useCallback(
+    (updates: Record<string, string | undefined>, resetPage = true) => {
+      setSearchParams(
+        (current) => {
+          const next = new URLSearchParams(current);
+          for (const [key, value] of Object.entries(updates)) {
+            if (!value || value === ALL) next.delete(key);
+            else next.set(key, value);
+          }
+          if (resetPage) next.delete("page");
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
-  const filters = {
-    vacancy_id: vacancyFilter === ALL ? undefined : vacancyFilter,
-    branch_id: branchFilter === ALL ? undefined : branchFilter,
-    search: search.trim() || undefined,
-    date_from: dateFrom || undefined,
-    answers: Object.keys(answerFilters).length ? JSON.stringify(answerFilters) : undefined,
+  useEffect(() => setSearch(querySearch), [querySearch]);
+
+  useEffect(() => {
+    const nextSearch = search.trim();
+    if (nextSearch === querySearch) return;
+
+    // Debounce the URL write itself, not a second piece of state. That way clearing
+    // every filter cannot be undone by a stale debounced value from the previous query.
+    const timeout = window.setTimeout(
+      () => updateParams({ q: nextSearch || undefined }),
+      350,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [querySearch, search, updateParams]);
+
+  const selectVacancy = (value: string) => {
+    updateParams({ vacancy: value, answers: undefined });
   };
+
+  const setAnswerFilter = (questionId: string, value: string) => {
+    const next = { ...answerFilters };
+    if (value === ALL) delete next[questionId];
+    else next[questionId] = value;
+    updateParams({ answers: Object.keys(next).length ? JSON.stringify(next) : undefined });
+  };
+
+  const clearFilters = () => {
+    const next = new URLSearchParams();
+    if (view === "kanban") next.set("view", "kanban");
+    setSearchParams(next, { replace: true });
+    setSearch("");
+  };
+
+  const filters = useMemo(
+    () => ({
+      status: statusFilter === ALL ? undefined : statusFilter,
+      vacancy_id: vacancyFilter === ALL ? undefined : vacancyFilter,
+      branch_id: branchFilter === ALL ? undefined : branchFilter,
+      search: querySearch || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
+      answers: Object.keys(answerFilters).length ? JSON.stringify(answerFilters) : undefined,
+    }),
+    [answerFilters, branchFilter, dateFrom, dateTo, querySearch, statusFilter, vacancyFilter],
+  );
+  const pageSize = view === "kanban" ? 200 : PAGE_SIZE;
+  const applicationsQueryKey = ["applications", filters, page, pageSize] as const;
+  const activeFilterCount = [
+    querySearch,
+    vacancyFilter !== ALL ? vacancyFilter : "",
+    branchFilter !== ALL ? branchFilter : "",
+    statusFilter !== ALL ? statusFilter : "",
+    dateFrom,
+    dateTo,
+    ...Object.values(answerFilters),
+  ].filter(Boolean).length;
 
   const options = useQuery({ queryKey: ["app-filters"], queryFn: api.applications.filters });
   const statuses = useQuery({
@@ -256,8 +439,9 @@ export default function ApplicationsPage() {
   });
 
   const applications = useQuery({
-    queryKey: ["applications", filters],
-    queryFn: () => api.applications.list({ ...filters, page_size: 200 }),
+    queryKey: applicationsQueryKey,
+    queryFn: () => api.applications.list({ ...filters, page, page_size: pageSize }),
+    placeholderData: (previous) => previous,
   });
 
   const detail = useQuery({
@@ -277,9 +461,9 @@ export default function ApplicationsPage() {
     mutationFn: ({ id, statusId }: { id: string; statusId: string }) =>
       api.applications.setStatus(id, statusId),
     onMutate: async ({ id, statusId }) => {
-      await qc.cancelQueries({ queryKey: ["applications", filters] });
-      const previous = qc.getQueryData(["applications", filters]);
-      qc.setQueryData(["applications", filters], (old: typeof applications.data) =>
+      await qc.cancelQueries({ queryKey: applicationsQueryKey });
+      const previous = qc.getQueryData<ApplicationPage>(applicationsQueryKey);
+      qc.setQueryData<ApplicationPage>(applicationsQueryKey, (old) =>
         old
           ? {
               ...old,
@@ -290,13 +474,25 @@ export default function ApplicationsPage() {
       return { previous };
     },
     onError: (e: Error, _vars, context) => {
-      if (context?.previous) qc.setQueryData(["applications", filters], context.previous);
+      if (context?.previous) qc.setQueryData(applicationsQueryKey, context.previous);
       toast.error(e.message);
     },
     onSuccess: async () => {
       await invalidate();
       toast.success(t("toast.statusChanged"));
     },
+  });
+
+  const bulkSetStatus = useMutation({
+    mutationFn: ({ ids, statusId }: { ids: string[]; statusId: string }) =>
+      api.applications.bulkSetStatus(ids, statusId),
+    onSuccess: async (result) => {
+      setSelectedIds([]);
+      setBulkStatus(ALL);
+      await invalidate();
+      toast.success(t("applications.bulkMoved", { count: result.updated }));
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const addComment = useMutation({
@@ -312,7 +508,7 @@ export default function ApplicationsPage() {
     mutationFn: api.applications.remove,
     onSuccess: async () => {
       setConfirmDelete(false);
-      navigate("/applications");
+      navigate(`/applications${location.search}`);
       await invalidate();
       toast.success(t("toast.deleted"));
     },
@@ -331,213 +527,430 @@ export default function ApplicationsPage() {
   }
 
   const items = applications.data?.items ?? [];
+  const total = applications.data?.total ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
   const statusList = statuses.data ?? [];
   const statusById = new Map(statusList.map((s) => [s.id, s]));
+  const selectedSet = new Set(selectedIds);
+  const allPageSelected = items.length > 0 && items.every((item) => selectedSet.has(item.id));
+  const somePageSelected = items.some((item) => selectedSet.has(item.id));
+
+  const openApplication = (id: string) => navigate(`/applications/${id}${location.search}`);
+  const closeApplication = () => navigate(`/applications${location.search}`);
+  const changePage = (_event: React.ChangeEvent<unknown>, nextPage: number) => {
+    updateParams({ page: nextPage > 1 ? String(nextPage) : undefined }, false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const toggleSelection = (id: string) => {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((selected) => selected !== id) : [...current, id],
+    );
+  };
+  const togglePageSelection = () => {
+    setSelectedIds((current) => {
+      if (allPageSelected) return current.filter((id) => !items.some((item) => item.id === id));
+      return Array.from(new Set([...current, ...items.map((item) => item.id)]));
+    });
+  };
+
+  useEffect(() => {
+    setSelectedIds([]);
+    setBulkStatus(ALL);
+  }, [filters, page, view]);
+
+  useEffect(() => {
+    if (view === "table" && applications.data && page > pageCount) {
+      updateParams({ page: pageCount > 1 ? String(pageCount) : undefined }, false);
+    }
+  }, [applications.data, page, pageCount, updateParams, view]);
 
   return (
     <>
       <PageHeader
         title={t("applications.title")}
+        description={t("applications.subtitle")}
         action={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <MuiButton
+              variant="outlined"
+              startIcon={<Download size={18} />}
               onClick={() =>
                 downloadExport(filters as Record<string, string | undefined>)
                   .then(() => toast.success(t("toast.exported")))
                   .catch((e: Error) => toast.error(e.message))
               }
             >
-              <Download className="h-4 w-4" /> {t("applications.export")}
-            </Button>
-            <Button
-              variant={view === "kanban" ? "default" : "outline"}
-              size="icon"
-              aria-label={t("applications.kanban")}
-              onClick={() => setView("kanban")}
+              {t("applications.export")}
+            </MuiButton>
+            <ToggleButtonGroup
+              exclusive
+              value={view}
+              size="small"
+              aria-label={t("applications.view")}
+              onChange={(_event, nextView: "table" | "kanban" | null) => {
+                if (nextView) updateParams({ view: nextView === "kanban" ? nextView : undefined });
+              }}
+              sx={{ "& .MuiToggleButton-root": { minWidth: 44, minHeight: 44, px: 1.25 } }}
             >
-              <KanbanSquare className="h-4 w-4" />
-            </Button>
-            <Button
-              variant={view === "table" ? "default" : "outline"}
-              size="icon"
-              aria-label={t("applications.table")}
-              onClick={() => setView("table")}
-            >
-              <Table2 className="h-4 w-4" />
-            </Button>
-          </div>
+              <ToggleButton value="table" aria-label={t("applications.table")}>
+                <Table2 size={18} />
+              </ToggleButton>
+              <ToggleButton value="kanban" aria-label={t("applications.kanban")}>
+                <KanbanSquare size={18} />
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Stack>
         }
       />
 
-      <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <Input
-          placeholder={t("applications.searchPlaceholder")}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <Select value={vacancyFilter} onValueChange={selectVacancy}>
-          <SelectTrigger aria-label={t("applications.vacancy")}>
-            <SelectValue placeholder={t("applications.vacancy")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>{t("applications.vacancy")}: {t("common.all")}</SelectItem>
-            {(options.data?.vacancies ?? []).map((v) => (
-              <SelectItem key={v.id} value={v.id}>
-                {v.title}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={branchFilter} onValueChange={setBranchFilter}>
-          <SelectTrigger aria-label={t("applications.branch")}>
-            <SelectValue placeholder={t("applications.branch")} />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL}>{t("applications.branch")}: {t("common.all")}</SelectItem>
-            <SelectItem value="null">{t("common.none")}</SelectItem>
-            {(options.data?.branches ?? []).map((b) => (
-              <SelectItem key={b.id} value={b.id}>
-                {b.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          type="date"
-          aria-label={t("applications.date")}
-          value={dateFrom}
-          onChange={(e) => setDateFrom(e.target.value)}
-        />
-      </div>
-
-      {/* Only shown once a single vacancy is picked — that's what fixes which questions
-          (and thus which answer options) are even in play. */}
-      {vacancyFilter !== ALL && (questionFilters.data?.length ?? 0) > 0 && (
-        <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {questionFilters.data!.map((q) => (
-            <Select
-              key={q.id}
-              value={answerFilters[q.id] ?? ALL}
-              onValueChange={(v) =>
-                setAnswerFilters((prev) => {
-                  const next = { ...prev };
-                  if (v === ALL) delete next[q.id];
-                  else next[q.id] = v;
-                  return next;
-                })
-              }
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, minmax(0, 1fr))",
+                lg: "minmax(240px, 1.45fr) repeat(3, minmax(160px, 1fr))",
+              },
+              gap: 2,
+            }}
+          >
+            <TextField
+              label={t("common.search")}
+              placeholder={t("applications.searchPlaceholder")}
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <Search size={18} />
+                  </InputAdornment>
+                ),
+              }}
+            />
+            <TextField
+              select
+              label={t("applications.vacancy")}
+              value={vacancyFilter}
+              onChange={(event) => selectVacancy(event.target.value)}
             >
-              <SelectTrigger aria-label={questionTextToPlainText(q.text)}>
-                <SelectValue placeholder={q.text} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={ALL}>
-                  {q.text}: {t("common.all")}
-                </SelectItem>
-                {(q.options ?? []).map((opt) => (
-                  <SelectItem key={opt} value={opt}>
-                    {opt}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ))}
-        </div>
+              <MenuItem value={ALL}>{t("common.all")}</MenuItem>
+              {(options.data?.vacancies ?? []).map((vacancy) => (
+                <MenuItem key={vacancy.id} value={vacancy.id}>{vacancy.title}</MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label={t("applications.branch")}
+              value={branchFilter}
+              onChange={(event) => updateParams({ branch: event.target.value })}
+            >
+              <MenuItem value={ALL}>{t("common.all")}</MenuItem>
+              <MenuItem value="null">{t("common.none")}</MenuItem>
+              {(options.data?.branches ?? []).map((branch) => (
+                <MenuItem key={branch.id} value={branch.id}>{branch.name}</MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              select
+              label={t("applications.status")}
+              value={statusFilter}
+              onChange={(event) => updateParams({ status: event.target.value })}
+            >
+              <MenuItem value={ALL}>{t("common.all")}</MenuItem>
+              {statusList.map((status) => (
+                <MenuItem key={status.id} value={status.id}>
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Box sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: status.color }} />
+                    <span>{status.label}</span>
+                  </Stack>
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              type="date"
+              label={t("applications.dateFrom")}
+              value={dateFrom}
+              onChange={(event) => updateParams({ from: event.target.value })}
+              InputLabelProps={{ shrink: true }}
+            />
+            <TextField
+              type="date"
+              label={t("applications.dateTo")}
+              value={dateTo}
+              onChange={(event) => updateParams({ to: event.target.value })}
+              InputLabelProps={{ shrink: true }}
+            />
+          </Box>
+
+          {vacancyFilter !== ALL && (questionFilters.data?.length ?? 0) > 0 && (
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" },
+                gap: 2,
+                mt: 2,
+                pt: 2,
+                borderTop: `1px dashed ${theme.palette.divider}`,
+              }}
+            >
+              {questionFilters.data!.map((question) => (
+                <TextField
+                  select
+                  key={question.id}
+                  label={questionTextToPlainText(question.text)}
+                  value={answerFilters[question.id] ?? ALL}
+                  onChange={(event) => setAnswerFilter(question.id, event.target.value)}
+                >
+                  <MenuItem value={ALL}>{t("common.all")}</MenuItem>
+                  {(question.options ?? []).map((option) => (
+                    <MenuItem key={option} value={option}>{option}</MenuItem>
+                  ))}
+                </TextField>
+              ))}
+            </Box>
+          )}
+
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            alignItems={{ xs: "stretch", sm: "center" }}
+            justifyContent="space-between"
+            spacing={1.5}
+            sx={{ mt: 2.5 }}
+          >
+            <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
+              <Typography variant="body2" color="text.secondary">
+                {t("applications.resultCount", { count: total })}
+              </Typography>
+              {activeFilterCount > 0 && (
+                <Chip
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  label={t("applications.activeFilters", { count: activeFilterCount })}
+                />
+              )}
+              {applications.isFetching && !applications.isPending && <CircularProgress size={18} />}
+            </Stack>
+            {activeFilterCount > 0 && (
+              <MuiButton variant="text" startIcon={<FilterX size={17} />} onClick={clearFilters}>
+                {t("applications.clearFilters")}
+              </MuiButton>
+            )}
+          </Stack>
+        </CardContent>
+      </Card>
+
+      {view === "table" && selectedIds.length > 0 && (
+        <Paper
+          role="region"
+          aria-label={t("applications.bulkActions")}
+          sx={{ mb: 2, p: 1.5, border: `1px solid ${alpha(theme.palette.primary.main, 0.2)}`, bgcolor: alpha(theme.palette.primary.main, 0.06) }}
+        >
+          <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
+            <Typography variant="subtitle2" sx={{ minWidth: 150 }}>
+              {t("applications.selected", { count: selectedIds.length })}
+            </Typography>
+            <TextField
+              select
+              size="small"
+              label={t("applications.moveToStatus")}
+              value={bulkStatus}
+              onChange={(event) => setBulkStatus(event.target.value)}
+              sx={{ minWidth: { sm: 240 } }}
+            >
+              <MenuItem value={ALL}>{t("applications.chooseStatus")}</MenuItem>
+              {statusList.map((status) => (
+                <MenuItem key={status.id} value={status.id}>{status.label}</MenuItem>
+              ))}
+            </TextField>
+            <MuiButton
+              variant="contained"
+              disabled={bulkStatus === ALL || bulkSetStatus.isPending}
+              onClick={() => bulkSetStatus.mutate({ ids: selectedIds, statusId: bulkStatus })}
+            >
+              {bulkSetStatus.isPending ? t("common.loading") : t("applications.apply")}
+            </MuiButton>
+            <MuiButton variant="text" color="inherit" onClick={() => setSelectedIds([])}>
+              {t("common.cancel")}
+            </MuiButton>
+          </Stack>
+        </Paper>
       )}
 
       {applications.isPending || statuses.isPending ? (
         <Skeleton className="h-96" />
+      ) : applications.isError ? (
+        <EmptyState
+          icon={Inbox}
+          title={t("common.error")}
+          description={(applications.error as Error).message}
+          action={<Button onClick={() => applications.refetch()}>{t("common.retry")}</Button>}
+        />
       ) : items.length === 0 ? (
         <EmptyState
           icon={Inbox}
-          title={t("applications.empty")}
-          description={t("applications.emptyDesc")}
+          title={activeFilterCount ? t("applications.noResults") : t("applications.empty")}
+          description={activeFilterCount ? t("applications.noResultsDesc") : t("applications.emptyDesc")}
+          action={activeFilterCount ? <Button onClick={clearFilters}>{t("applications.clearFilters")}</Button> : undefined}
         />
       ) : view === "kanban" ? (
         <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={handleDragEnd}>
-          <div className="table-scroll pb-4">
-            <div className="flex gap-3">
+          <Box sx={{ display: { xs: "grid", sm: "flex" }, gap: 2, overflowX: { sm: "auto" }, pb: 2 }}>
               {statusList.map((status) => (
                 <KanbanColumn
                   key={status.id}
                   status={status}
                   items={items.filter((a) => a.status_id === status.id)}
-                  onOpen={(id) => navigate(`/applications/${id}`)}
+                  onOpen={openApplication}
                 />
               ))}
-            </div>
-          </div>
+          </Box>
         </DndContext>
       ) : (
-        <div className="table-scroll rounded-xl border">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-muted/50 text-left">
-              <tr>
-                <th className="p-3 font-medium">{t("applications.candidate")}</th>
-                <th className="p-3 font-medium">{t("applications.vacancy")}</th>
-                <th className="p-3 font-medium">{t("applications.branch")}</th>
-                <th className="p-3 font-medium">{t("applications.phone")}</th>
-                <th className="p-3 font-medium">{t("applications.date")}</th>
-                <th className="p-3 font-medium">{t("applications.status")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((a) => (
-                <tr
-                  key={a.id}
-                  className="cursor-pointer border-b last:border-0 hover:bg-accent/50"
-                  role="link"
-                  tabIndex={0}
-                  aria-label={`${a.candidate_name} — ${a.vacancy_title}`}
-                  onClick={() => navigate(`/applications/${a.id}`)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      navigate(`/applications/${a.id}`);
-                    }
-                  }}
-                >
-                  <td className="p-3 font-medium">
-                    <div className="flex items-center gap-2">
-                      <CandidateAvatar
-                        name={a.candidate_name}
-                        photoUrl={a.candidate_photo_url}
-                        className="h-8 w-8"
+        <>
+          <TableContainer component={Card} sx={{ display: { xs: "none", md: "block" } }}>
+            <Table aria-label={t("applications.table")}>
+              <TableHead>
+                <TableRow>
+                  <TableCell padding="checkbox">
+                    <Checkbox
+                      checked={allPageSelected}
+                      indeterminate={!allPageSelected && somePageSelected}
+                      onChange={togglePageSelection}
+                      inputProps={{ "aria-label": t("applications.selectPage") }}
+                    />
+                  </TableCell>
+                  <TableCell>{t("applications.candidate")}</TableCell>
+                  <TableCell>{t("applications.vacancy")}</TableCell>
+                  <TableCell>{t("applications.branch")}</TableCell>
+                  <TableCell>{t("applications.phone")}</TableCell>
+                  <TableCell>{t("applications.date")}</TableCell>
+                  <TableCell>{t("applications.status")}</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {items.map((application) => (
+                  <TableRow
+                    hover
+                    selected={selectedSet.has(application.id)}
+                    key={application.id}
+                    role="link"
+                    tabIndex={0}
+                    aria-label={`${application.candidate_name} — ${application.vacancy_title}`}
+                    onClick={() => openApplication(application.id)}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        openApplication(application.id);
+                      }
+                    }}
+                    sx={{ cursor: "pointer", "&:focus-visible": { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: -2 } }}
+                  >
+                    <TableCell padding="checkbox" onClick={(event) => event.stopPropagation()}>
+                      <Checkbox
+                        checked={selectedSet.has(application.id)}
+                        onChange={() => toggleSelection(application.id)}
+                        inputProps={{ "aria-label": t("applications.selectCandidate", { name: application.candidate_name }) }}
                       />
-                      <span className="truncate">{a.candidate_name}</span>
-                    </div>
-                  </td>
-                  <td className="p-3">{a.vacancy_title}</td>
-                  <td className="p-3 text-muted-foreground">{a.branch_name ?? "—"}</td>
-                  <td className="p-3 text-muted-foreground">{a.candidate_phone ?? "—"}</td>
-                  <td className="p-3 whitespace-nowrap text-muted-foreground">
-                    {formatDate(a.created_at)}
-                  </td>
-                  <td className="p-3">
-                    {statusById.get(a.status_id) ? (
-                      <Badge variant="outline" className="gap-1.5">
-                        <span
-                          className="h-2 w-2 rounded-full"
-                          style={{ backgroundColor: statusById.get(a.status_id)?.color }}
-                        />
-                        {statusById.get(a.status_id)?.label}
-                      </Badge>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                    </TableCell>
+                    <TableCell>
+                      <Stack direction="row" alignItems="center" spacing={1.25}>
+                        <CandidateAvatar name={application.candidate_name} photoUrl={application.candidate_photo_url} className="h-9 w-9" />
+                        <Typography variant="subtitle2" noWrap>{application.candidate_name}</Typography>
+                      </Stack>
+                    </TableCell>
+                    <TableCell>{application.vacancy_title}</TableCell>
+                    <TableCell sx={{ color: "text.secondary" }}>{application.branch_name ?? "—"}</TableCell>
+                    <TableCell sx={{ color: "text.secondary", whiteSpace: "nowrap" }}>{application.candidate_phone ?? "—"}</TableCell>
+                    <TableCell sx={{ color: "text.secondary", whiteSpace: "nowrap" }}>{formatDate(application.created_at)}</TableCell>
+                    <TableCell><ApplicationStatusChip status={statusById.get(application.status_id)} /></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          <Box sx={{ display: { xs: "grid", md: "none" }, gap: 1.5 }}>
+            {items.map((application) => (
+              <Card
+                key={application.id}
+                sx={{
+                  border: `1px solid ${selectedSet.has(application.id) ? alpha(theme.palette.primary.main, 0.5) : theme.palette.divider}`,
+                  boxShadow: selectedSet.has(application.id) ? `0 0 0 2px ${alpha(theme.palette.primary.main, 0.12)}` : undefined,
+                }}
+              >
+                <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
+                  <Stack direction="row" alignItems="flex-start" spacing={1}>
+                    <Checkbox
+                      checked={selectedSet.has(application.id)}
+                      onChange={() => toggleSelection(application.id)}
+                      inputProps={{ "aria-label": t("applications.selectCandidate", { name: application.candidate_name }) }}
+                      sx={{ ml: -1, mt: -0.75 }}
+                    />
+                    <Box
+                      component="button"
+                      type="button"
+                      onClick={() => openApplication(application.id)}
+                      sx={{
+                        all: "unset",
+                        display: "block",
+                        minWidth: 0,
+                        flexGrow: 1,
+                        cursor: "pointer",
+                        borderRadius: 1,
+                        "&:focus-visible": { outline: `2px solid ${theme.palette.primary.main}`, outlineOffset: 3 },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={1.25}>
+                        <CandidateAvatar name={application.candidate_name} photoUrl={application.candidate_photo_url} />
+                        <Box sx={{ minWidth: 0, flexGrow: 1 }}>
+                          <Typography variant="subtitle2" noWrap>{application.candidate_name}</Typography>
+                          <Typography variant="body2" color="text.secondary" noWrap>{application.vacancy_title}</Typography>
+                        </Box>
+                      </Stack>
+                      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ mt: 1.5 }}>
+                        <ApplicationStatusChip status={statusById.get(application.status_id)} />
+                        <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>{formatDate(application.created_at)}</Typography>
+                      </Stack>
+                      {application.branch_name && (
+                        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                          {application.branch_name}
+                        </Typography>
+                      )}
+                    </Box>
+                  </Stack>
+                </CardContent>
+              </Card>
+            ))}
+          </Box>
+
+          {pageCount > 1 && (
+            <Stack alignItems="center" spacing={1} sx={{ mt: 3 }}>
+              <Pagination
+                count={pageCount}
+                page={page}
+                onChange={changePage}
+                color="primary"
+                siblingCount={0}
+                boundaryCount={1}
+                showFirstButton
+                showLastButton
+              />
+              <Typography variant="caption" color="text.secondary">
+                {t("applications.pageSummary", { from: (page - 1) * pageSize + 1, to: Math.min(page * pageSize, total), total })}
+              </Typography>
+            </Stack>
+          )}
+        </>
       )}
 
       {/* Detail drawer, opened by route so a card is linkable and shareable. */}
       <Dialog
         open={Boolean(routeId)}
-        onOpenChange={(open) => !open && navigate("/applications")}
+        onOpenChange={(open) => !open && closeApplication()}
       >
         <DrawerContent>
           {detail.isPending ? (
@@ -605,6 +1018,7 @@ export default function ApplicationsPage() {
                   variant="ghost"
                   size="icon"
                   className="ml-auto"
+                  aria-label={t("applications.deleteTitle")}
                   onClick={() => setConfirmDelete(true)}
                 >
                   <Trash2 className="h-4 w-4 text-destructive" />
@@ -631,17 +1045,7 @@ export default function ApplicationsPage() {
                     {detail.data.answers.map((answer) => (
                       <div key={answer.question_id}>
                         <QuestionLabel text={answer.question_text} />
-                        <dd className="text-sm">
-                          {answer.skipped || answer.answer === null ? (
-                            <span className="text-muted-foreground">
-                              {t("applications.skipped")}
-                            </span>
-                          ) : Array.isArray(answer.answer) ? (
-                            answer.answer.join(", ")
-                          ) : (
-                            answer.answer
-                          )}
-                        </dd>
+                        <dd className="text-sm"><AnswerValue answer={answer} /></dd>
                       </div>
                     ))}
                   </dl>

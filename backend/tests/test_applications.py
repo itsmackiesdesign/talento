@@ -35,14 +35,20 @@ async def _status_id(company_id: str, key: str) -> str:
     return str(row.id)
 
 
-async def _seed_application(company_id: str, title="Бариста", status="new", answers=None):
+async def _seed_application(
+    company_id: str,
+    title="Бариста",
+    status="new",
+    answers=None,
+    candidate_name="Аскар",
+):
     status_id = await _status_id(company_id, status)
     async with TestSession() as db:
         vacancy = Vacancy(company_id=uuid.UUID(company_id), title=title, status="active")
         candidate = Candidate(
             telegram_user_id=uuid.uuid4().int % 10**9,
             telegram_username="askar",
-            first_name="Аскар",
+            first_name=candidate_name,
             phone="+998901234567",
         )
         db.add_all([vacancy, candidate])
@@ -340,6 +346,60 @@ async def test_repeated_same_status_does_not_duplicate_history(client):
     assert len(detail.json()["history"]) == 1
 
 
+async def test_bulk_status_change_is_atomic_and_writes_history(client):
+    owner = await make_company(client)
+    first = await _seed_application(owner["company_id"], "Бариста")
+    second = await _seed_application(owner["company_id"], "Кассир")
+    interview_id = await _status_id(owner["company_id"], "interview")
+
+    with _no_celery() as notify:
+        response = await client.patch(
+            "/api/v1/applications/bulk/status",
+            json={
+                "application_ids": [first["application_id"], second["application_id"]],
+                "status_id": interview_id,
+            },
+            headers=owner["headers"],
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"requested": 2, "updated": 2, "unchanged": 0}
+    assert notify.call_count == 2
+
+    for application_id in (first["application_id"], second["application_id"]):
+        detail = await client.get(
+            f"/api/v1/applications/{application_id}", headers=owner["headers"]
+        )
+        assert detail.json()["status_id"] == interview_id
+        assert detail.json()["history"][-1]["to_status_label"] == "Интервью"
+
+
+async def test_bulk_status_change_rejects_foreign_ids_without_partial_update(client):
+    owner = await make_company(client, "Owner")
+    other = await make_company(client, "Other")
+    own = await _seed_application(owner["company_id"])
+    foreign = await _seed_application(other["company_id"])
+    interview_id = await _status_id(owner["company_id"], "interview")
+    new_id = await _status_id(owner["company_id"], "new")
+
+    with _no_celery() as notify:
+        response = await client.patch(
+            "/api/v1/applications/bulk/status",
+            json={
+                "application_ids": [own["application_id"], foreign["application_id"]],
+                "status_id": interview_id,
+            },
+            headers=owner["headers"],
+        )
+
+    assert response.status_code == 404
+    assert notify.call_count == 0
+    detail = await client.get(
+        f"/api/v1/applications/{own['application_id']}", headers=owner["headers"]
+    )
+    assert detail.json()["status_id"] == new_id
+
+
 async def test_invalid_status_is_rejected(client):
     owner = await make_company(client)
     seed = await _seed_application(owner["company_id"])
@@ -401,6 +461,22 @@ async def test_csv_export_contains_all_columns(client):
     assert "+998901234567" in row
     assert "@askar" in row
     assert "Новая" in row
+
+
+async def test_csv_export_respects_search_filter(client):
+    owner = await make_company(client)
+    await _seed_application(owner["company_id"], "Бариста", candidate_name="Аскар")
+    await _seed_application(owner["company_id"], "Кассир", candidate_name="Малика")
+
+    response = await client.get(
+        "/api/v1/applications/export",
+        params={"format": "csv", "search": "Малика"},
+        headers=owner["headers"],
+    )
+
+    assert response.status_code == 200
+    assert "Малика" in response.text
+    assert "Аскар" not in response.text
 
 
 async def test_export_rejects_unsupported_format(client):
