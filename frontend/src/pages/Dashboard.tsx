@@ -9,7 +9,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { alpha, useTheme } from "@mui/material/styles";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, Bot, BriefcaseBusiness, Inbox, Sparkles, TrendingUp } from "lucide-react";
+import { ArrowRight, Bot, BriefcaseBusiness, CalendarRange, Inbox, TrendingUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import {
@@ -165,7 +165,7 @@ export default function DashboardPage() {
         <MetricCard
           label={t("dashboard.last30")}
           value={data.applications_30d}
-          icon={Sparkles}
+          icon={CalendarRange}
           color="info"
           note={t("dashboard.currentPeriod", { defaultValue: "текущий период" })}
         />

@@ -40,7 +40,6 @@ import {
   Send,
   Settings,
   ShieldCheck,
-  Sparkles,
   TextCursorInput,
   UserRound,
 } from "lucide-react";
@@ -542,7 +541,7 @@ export default function BotBuilderPage() {
           <Card>
             <CardContent>
               <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1.5 }}>
-                <Sparkles size={18} color={theme.palette.primary.main} />
+                <ShieldCheck size={18} color={theme.palette.primary.main} />
                 <Typography variant="subtitle2">{t("botBuilder.validation", { defaultValue: "Проверка" })}</Typography>
               </Stack>
               <Stack spacing={1.25}>

@@ -3,6 +3,27 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { useTheme } from "@mui/material/styles";
 
+export function TalentoMark({
+  color = "currentColor",
+  size = 34,
+}: {
+  color?: string;
+  size?: number | string;
+}) {
+  return (
+    <Box
+      component="svg"
+      viewBox="0 0 540 535"
+      aria-hidden
+      focusable="false"
+      sx={{ display: "block", width: size, height: size, flexShrink: 0, overflow: "visible", color }}
+    >
+      <path fill="currentColor" d="M0 535A270 270 0 0 1 540 535H420A150 150 0 0 0 120 535Z" />
+      <circle fill="currentColor" cx="270" cy="88" r="88" />
+    </Box>
+  );
+}
+
 export function BrandLogo({
   compact = false,
   inverse = false,
@@ -11,26 +32,34 @@ export function BrandLogo({
   inverse?: boolean;
 }) {
   const theme = useTheme();
-  const symbol = inverse || theme.palette.mode === "dark"
-    ? "/assets/brand/talento-symbol-white.svg"
-    : "/assets/brand/talento-symbol-blue.svg";
+  const wordColor = inverse ? theme.palette.common.white : theme.palette.text.primary;
+  const markColor = inverse ? theme.palette.common.white : theme.palette.primary.main;
 
   return (
-    <Stack direction="row" alignItems="center" spacing={1.25} sx={{ minWidth: 0 }}>
-      <Box component="img" src={symbol} alt="" aria-hidden sx={{ width: 34, height: 34, flexShrink: 0 }} />
+    <Stack
+      direction="row"
+      alignItems="flex-end"
+      spacing={compact ? 0 : 0.1}
+      role="img"
+      aria-label="talento"
+      sx={{ minWidth: 0, width: "fit-content" }}
+    >
       {!compact && (
         <Typography
           component="span"
+          aria-hidden
           sx={{
-            color: inverse ? "common.white" : "text.primary",
+            color: wordColor,
             fontSize: 23,
             fontWeight: 800,
-            letterSpacing: -0.7,
+            lineHeight: 1,
+            letterSpacing: -1.2,
           }}
         >
-          talento
+          talent
         </Typography>
       )}
+      <TalentoMark color={markColor} size={compact ? 32 : "0.83em"} />
     </Stack>
   );
 }
