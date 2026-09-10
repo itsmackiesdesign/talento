@@ -510,6 +510,9 @@ class Application(Base):
     history: Mapped[list["ApplicationStatusHistory"]] = relationship(
         back_populates="application", cascade="all, delete-orphan"
     )
+    tasks: Mapped[list["ApplicationTask"]] = relationship(
+        back_populates="application", cascade="all, delete-orphan"
+    )
 
 
 class ApplicationComment(Base):
@@ -527,6 +530,32 @@ class ApplicationComment(Base):
 
     application: Mapped[Application] = relationship(back_populates="comments")
     user: Mapped[User] = relationship()
+
+
+class ApplicationTask(Base):
+    """A small, explicit next action for the recruiter-facing candidate workspace."""
+
+    __tablename__ = "application_tasks"
+    __table_args__ = (
+        Index("ix_application_tasks_due", "application_id", "completed_at", "due_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    due_at: Mapped[datetime | None] = mapped_column(TS)
+    completed_at: Mapped[datetime | None] = mapped_column(TS)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    completed_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+    application: Mapped[Application] = relationship(back_populates="tasks")
 
 
 class ApplicationStatusHistory(Base):

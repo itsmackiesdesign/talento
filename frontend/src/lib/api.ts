@@ -17,6 +17,7 @@ import type {
   BillingSummary,
   ApplicationDetail,
   ApplicationPage,
+  ApplicationTask,
   ApplicationStatusOut,
   BulkStatusUpdateResult,
   Bot,
@@ -294,6 +295,10 @@ export const api = {
       }),
     comment: (id: string, text: string) =>
       post<Comment>(`/applications/${id}/comments`, { text }),
+    createTask: (id: string, data: { title: string; due_at?: string | null }) =>
+      post<ApplicationTask>(`/applications/${id}/tasks`, data),
+    updateTask: (applicationId: string, taskId: string, completed: boolean) =>
+      patch<ApplicationTask>(`/applications/${applicationId}/tasks/${taskId}`, { completed }),
     remove: (id: string) => del<void>(`/applications/${id}`),
     filters: () => get<FilterOptions>("/applications/meta/filters"),
     exportUrl: (params: Record<string, string | undefined>) =>

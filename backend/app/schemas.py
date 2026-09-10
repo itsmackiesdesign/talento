@@ -583,6 +583,23 @@ class CommentCreate(BaseModel):
     text: Annotated[str, Field(min_length=1, max_length=4000)]
 
 
+class ApplicationTaskOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    due_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class ApplicationTaskCreate(BaseModel):
+    title: Annotated[str, Field(min_length=1, max_length=300)]
+    due_at: datetime | None = None
+
+
+class ApplicationTaskUpdate(BaseModel):
+    completed: bool
+
+
 class StatusHistoryOut(BaseModel):
     # Snapshotted at the time of the transition, not a live lookup — see
     # ApplicationStatusHistory in app/models.py. Stays readable even after the status
@@ -609,6 +626,7 @@ class ApplicationListItem(BaseModel):
 
 class ApplicationDetail(ApplicationListItem):
     answers: list[dict[str, Any]]
+    tasks: list[ApplicationTaskOut]
     comments: list[CommentOut]
     history: list[StatusHistoryOut]
 

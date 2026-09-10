@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app.models import Application, ApplicationStatus, Candidate, Vacancy
+from app.models import Application, ApplicationStatus, ApplicationTask, Candidate, Vacancy
 from tests.conftest import TestSession, make_company
 
 # The three system stages plus the three custom ones every company is seeded with (see
@@ -615,3 +615,50 @@ async def test_delete_application_for_gdpr_request(client):
 
     listing = await client.get("/api/v1/applications", headers=owner["headers"])
     assert listing.json()["total"] == 0
+
+
+async def test_candidate_workspace_next_actions_are_scoped_and_completable(client):
+    owner = await make_company(client)
+    other = await make_company(client, "Other")
+    seed = await _seed_application(owner["company_id"])
+    task = await client.post(
+        f"/api/v1/applications/{seed['application_id']}/tasks",
+        json={"title": "Позвонить кандидату", "due_at": "2026-09-11T09:00:00Z"},
+        headers=owner["headers"],
+    )
+
+    assert task.status_code == 201, task.text
+    task_id = task.json()["id"]
+    detail = await client.get(
+        f"/api/v1/applications/{seed['application_id']}", headers=owner["headers"]
+    )
+    assert detail.status_code == 200
+    assert detail.json()["tasks"] == [
+        {
+            "id": task_id,
+            "title": "Позвонить кандидату",
+            "due_at": "2026-09-11T09:00:00Z",
+            "completed_at": None,
+            "created_at": task.json()["created_at"],
+        }
+    ]
+
+    completed = await client.patch(
+        f"/api/v1/applications/{seed['application_id']}/tasks/{task_id}",
+        json={"completed": True},
+        headers=owner["headers"],
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["completed_at"] is not None
+
+    forbidden = await client.patch(
+        f"/api/v1/applications/{seed['application_id']}/tasks/{task_id}",
+        json={"completed": False},
+        headers=other["headers"],
+    )
+    assert forbidden.status_code == 404
+
+    async with TestSession() as db:
+        stored = await db.scalar(select(ApplicationTask))
+    assert stored is not None
+    assert stored.completed_at is not None

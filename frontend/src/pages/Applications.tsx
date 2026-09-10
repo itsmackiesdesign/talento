@@ -336,6 +336,8 @@ export default function ApplicationsPage() {
     [answerFiltersParam],
   );
   const [comment, setComment] = useState("");
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskDueAt, setTaskDueAt] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState(ALL);
@@ -502,6 +504,31 @@ export default function ApplicationsPage() {
       await qc.invalidateQueries({ queryKey: ["application", routeId] });
     },
     onError: (e: Error) => toast.error(e.message),
+  });
+
+  const addTask = useMutation({
+    mutationFn: ({ id, title, dueAt }: { id: string; title: string; dueAt: string }) =>
+      api.applications.createTask(id, {
+        title,
+        due_at: dueAt ? new Date(dueAt).toISOString() : null,
+      }),
+    onSuccess: async () => {
+      setTaskTitle("");
+      setTaskDueAt("");
+      await qc.invalidateQueries({ queryKey: ["application", routeId] });
+      toast.success(t("applications.addTask"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const updateTask = useMutation({
+    mutationFn: ({ applicationId, taskId, completed }: { applicationId: string; taskId: string; completed: boolean }) =>
+      api.applications.updateTask(applicationId, taskId, completed),
+    onSuccess: async (_result, variables) => {
+      await qc.invalidateQueries({ queryKey: ["application", variables.applicationId] });
+      if (variables.completed) toast.success(t("applications.taskCompleted"));
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const remove = useMutation({
@@ -1033,6 +1060,92 @@ export default function ApplicationsPage() {
                   </a>
                 </p>
               )}
+
+              <Separator />
+
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold">{t("applications.tasks")}</h3>
+                  <Badge variant="outline">{detail.data.tasks.filter((task) => !task.completed_at).length}</Badge>
+                </div>
+
+                {detail.data.tasks.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("applications.noTasks")}</p>
+                ) : (
+                  <Stack spacing={1}>
+                    {detail.data.tasks.map((task) => (
+                      <Paper
+                        key={task.id}
+                        variant="outlined"
+                        sx={{ display: "flex", alignItems: "flex-start", gap: 0.75, p: 0.75, borderRadius: 1.5 }}
+                      >
+                        <Checkbox
+                          size="small"
+                          checked={Boolean(task.completed_at)}
+                          disabled={updateTask.isPending}
+                          onChange={(event) => updateTask.mutate({
+                            applicationId: detail.data!.id,
+                            taskId: task.id,
+                            completed: event.target.checked,
+                          })}
+                          inputProps={{ "aria-label": task.title }}
+                          sx={{ mt: -0.65, ml: -0.65 }}
+                        />
+                        <Box sx={{ minWidth: 0, py: 0.25 }}>
+                          <Typography
+                            variant="body2"
+                            sx={{ textDecoration: task.completed_at ? "line-through" : "none", color: task.completed_at ? "text.secondary" : "text.primary" }}
+                          >
+                            {task.title}
+                          </Typography>
+                          {task.due_at && (
+                            <Typography variant="caption" color="text.secondary">
+                              {formatDateTime(task.due_at)}
+                            </Typography>
+                          )}
+                        </Box>
+                      </Paper>
+                    ))}
+                  </Stack>
+                )}
+
+                <Stack
+                  component="form"
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (taskTitle.trim() && !addTask.isPending) {
+                      addTask.mutate({ id: detail.data!.id, title: taskTitle.trim(), dueAt: taskDueAt });
+                    }
+                  }}
+                >
+                  <TextField
+                    size="small"
+                    label={t("applications.taskTitle")}
+                    value={taskTitle}
+                    onChange={(event) => setTaskTitle(event.target.value)}
+                    fullWidth
+                  />
+                  <TextField
+                    size="small"
+                    label={t("applications.taskDue")}
+                    type="datetime-local"
+                    value={taskDueAt}
+                    onChange={(event) => setTaskDueAt(event.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                    sx={{ minWidth: { sm: 190 } }}
+                  />
+                  <MuiButton
+                    type="submit"
+                    variant="contained"
+                    disabled={!taskTitle.trim() || addTask.isPending}
+                    sx={{ whiteSpace: "nowrap" }}
+                  >
+                    {t("applications.addTask")}
+                  </MuiButton>
+                </Stack>
+              </section>
 
               <Separator />
 

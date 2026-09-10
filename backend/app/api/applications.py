@@ -20,6 +20,7 @@ from app.models import (
     ApplicationComment,
     ApplicationStatus,
     ApplicationStatusHistory,
+    ApplicationTask,
     Branch,
     Question,
     Vacancy,
@@ -28,6 +29,9 @@ from app.schemas import (
     ApplicationDetail,
     ApplicationListItem,
     ApplicationPage,
+    ApplicationTaskCreate,
+    ApplicationTaskOut,
+    ApplicationTaskUpdate,
     BulkStatusUpdate,
     BulkStatusUpdateResult,
     CommentCreate,
@@ -483,6 +487,7 @@ async def get_application(
         .options(
             selectinload(Application.comments).selectinload(ApplicationComment.user),
             selectinload(Application.history).selectinload(ApplicationStatusHistory.user),
+            selectinload(Application.tasks),
         )
     )
     row = (await db.execute(stmt)).first()
@@ -505,6 +510,24 @@ async def get_application(
     return ApplicationDetail(
         **item.model_dump(),
         answers=app.answers or [],
+        tasks=[
+            ApplicationTaskOut(
+                id=task.id,
+                title=task.title,
+                due_at=task.due_at,
+                completed_at=task.completed_at,
+                created_at=task.created_at,
+            )
+            for task in sorted(
+                app.tasks,
+                key=lambda task: (
+                    task.completed_at is not None,
+                    task.due_at is None,
+                    task.due_at or task.created_at,
+                    task.created_at,
+                ),
+            )
+        ],
         comments=[
             CommentOut(
                 id=c.id,
@@ -555,6 +578,75 @@ async def update_status(
         _enqueue_candidate_notification(app.id, current_status.id, target.id)
 
     return await get_application(application_id, company, db)
+
+
+@router.post(
+    "/{application_id}/tasks",
+    response_model=ApplicationTaskOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def add_task(
+    application_id: uuid.UUID,
+    payload: ApplicationTaskCreate,
+    company: CurrentCompany,
+    user: CurrentUser,
+    db: DB,
+) -> ApplicationTaskOut:
+    """Capture the recruiter's next action while the candidate context is open."""
+
+    await _load_owned(db, application_id, company.id)
+    task = ApplicationTask(
+        application_id=application_id,
+        title=payload.title.strip(),
+        due_at=payload.due_at,
+        created_by=user.id,
+    )
+    db.add(task)
+    await db.commit()
+    await db.refresh(task)
+    return ApplicationTaskOut(
+        id=task.id,
+        title=task.title,
+        due_at=task.due_at,
+        completed_at=task.completed_at,
+        created_at=task.created_at,
+    )
+
+
+@router.patch("/{application_id}/tasks/{task_id}", response_model=ApplicationTaskOut)
+async def update_task(
+    application_id: uuid.UUID,
+    task_id: uuid.UUID,
+    payload: ApplicationTaskUpdate,
+    company: CurrentCompany,
+    user: CurrentUser,
+    db: DB,
+) -> ApplicationTaskOut:
+    """Complete or reopen only a task belonging to this tenant's application."""
+
+    await _load_owned(db, application_id, company.id)
+    task = await db.scalar(
+        select(ApplicationTask).where(
+            ApplicationTask.id == task_id,
+            ApplicationTask.application_id == application_id,
+        )
+    )
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
+    if payload.completed:
+        task.completed_at = datetime.now(UTC)
+        task.completed_by = user.id
+    else:
+        task.completed_at = None
+        task.completed_by = None
+    await db.commit()
+    return ApplicationTaskOut(
+        id=task.id,
+        title=task.title,
+        due_at=task.due_at,
+        completed_at=task.completed_at,
+        created_at=task.created_at,
+    )
 
 
 def _enqueue_candidate_notification(

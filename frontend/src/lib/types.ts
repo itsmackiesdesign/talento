@@ -253,8 +253,17 @@ export interface StatusHistoryEntry {
   created_at: string;
 }
 
+export interface ApplicationTask {
+  id: string;
+  title: string;
+  due_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
 export interface ApplicationDetail extends ApplicationListItem {
   answers: Answer[];
+  tasks: ApplicationTask[];
   comments: Comment[];
   history: StatusHistoryEntry[];
 }
