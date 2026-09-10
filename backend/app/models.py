@@ -18,6 +18,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -513,6 +514,9 @@ class Application(Base):
     tasks: Mapped[list["ApplicationTask"]] = relationship(
         back_populates="application", cascade="all, delete-orphan"
     )
+    interviews: Mapped[list["ApplicationInterview"]] = relationship(
+        back_populates="application", cascade="all, delete-orphan"
+    )
 
 
 class ApplicationComment(Base):
@@ -556,6 +560,39 @@ class ApplicationTask(Base):
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     application: Mapped[Application] = relationship(back_populates="tasks")
+
+
+class ApplicationInterview(Base):
+    """A planned interview owned by the candidate application, not an external calendar."""
+
+    __tablename__ = "application_interviews"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('video', 'in_person', 'phone')", name="ck_application_interview_kind"
+        ),
+        CheckConstraint(
+            "status IN ('scheduled', 'completed', 'cancelled')",
+            name="ck_application_interview_status",
+        ),
+        Index("ix_application_interviews_schedule", "application_id", "status", "scheduled_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    application_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("applications.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="video")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="scheduled")
+    scheduled_at: Mapped[datetime] = mapped_column(TS, nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=45)
+    location: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+    application: Mapped[Application] = relationship(back_populates="interviews")
 
 
 class ApplicationStatusHistory(Base):

@@ -75,6 +75,7 @@ import type {
   ApplicationListItem,
   ApplicationPage,
   ApplicationStatusOut,
+  InterviewKind,
 } from "@/lib/types";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 
@@ -339,6 +340,11 @@ export default function ApplicationsPage() {
   const [transitionReason, setTransitionReason] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDueAt, setTaskDueAt] = useState("");
+  const [interviewKind, setInterviewKind] = useState<InterviewKind>("video");
+  const [interviewAt, setInterviewAt] = useState("");
+  const [interviewDuration, setInterviewDuration] = useState("45");
+  const [interviewLocation, setInterviewLocation] = useState("");
+  const [interviewNotes, setInterviewNotes] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState(ALL);
@@ -531,6 +537,36 @@ export default function ApplicationsPage() {
     onSuccess: async (_result, variables) => {
       await qc.invalidateQueries({ queryKey: ["application", variables.applicationId] });
       if (variables.completed) toast.success(t("applications.taskCompleted"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const addInterview = useMutation({
+    mutationFn: ({ id }: { id: string }) => api.applications.createInterview(id, {
+      kind: interviewKind,
+      scheduled_at: new Date(interviewAt).toISOString(),
+      duration_minutes: Number(interviewDuration),
+      location: interviewLocation.trim() || null,
+      notes: interviewNotes.trim() || null,
+    }),
+    onSuccess: async () => {
+      setInterviewAt("");
+      setInterviewLocation("");
+      setInterviewNotes("");
+      await qc.invalidateQueries({ queryKey: ["application", routeId] });
+      toast.success(t("applications.scheduleInterview"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const updateInterview = useMutation({
+    mutationFn: ({ applicationId, interviewId, status }: {
+      applicationId: string;
+      interviewId: string;
+      status: "completed" | "cancelled";
+    }) => api.applications.updateInterview(applicationId, interviewId, { status }),
+    onSuccess: async (_result, variables) => {
+      await qc.invalidateQueries({ queryKey: ["application", variables.applicationId] });
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -1072,6 +1108,146 @@ export default function ApplicationsPage() {
                 inputProps={{ maxLength: 1000 }}
                 onChange={(event) => setTransitionReason(event.target.value)}
               />
+
+              <section className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold">{t("applications.interviews")}</h3>
+                  <Badge variant="outline">
+                    {detail.data.interviews.filter((interview) => interview.status === "scheduled").length}
+                  </Badge>
+                </div>
+
+                {detail.data.interviews.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("applications.noInterviews")}</p>
+                ) : (
+                  <Stack spacing={1}>
+                    {detail.data.interviews.map((interview) => (
+                      <Paper key={interview.id} variant="outlined" sx={{ p: 1.25, borderRadius: 1.5 }}>
+                        <Stack spacing={0.75}>
+                          <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1}>
+                            <Typography variant="body2" fontWeight={700}>
+                              {interview.kind === "video"
+                                ? t("applications.interviewVideo")
+                                : interview.kind === "in_person"
+                                  ? t("applications.interviewInPerson")
+                                  : t("applications.interviewPhone")}
+                            </Typography>
+                            <Chip
+                              size="small"
+                              label={interview.status === "scheduled"
+                                ? t("applications.interviewScheduled")
+                                : interview.status === "completed"
+                                  ? t("applications.interviewCompleted")
+                                  : t("applications.interviewCancelled")}
+                              color={interview.status === "completed" ? "success" : interview.status === "cancelled" ? "default" : "primary"}
+                              variant="outlined"
+                            />
+                          </Stack>
+                          <Typography variant="body2">
+                            {formatDateTime(interview.scheduled_at)} · {t("applications.interviewMinutes", { count: interview.duration_minutes })}
+                          </Typography>
+                          {interview.location && <Typography variant="body2" color="text.secondary">{interview.location}</Typography>}
+                          {interview.notes && <Typography variant="body2" color="text.secondary">{interview.notes}</Typography>}
+                          {interview.status === "scheduled" && (
+                            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                              <MuiButton
+                                size="small"
+                                variant="outlined"
+                                disabled={updateInterview.isPending}
+                                sx={{ minHeight: 44 }}
+                                onClick={() => updateInterview.mutate({ applicationId: detail.data!.id, interviewId: interview.id, status: "completed" })}
+                              >
+                                {t("applications.markInterviewCompleted")}
+                              </MuiButton>
+                              <MuiButton
+                                size="small"
+                                color="inherit"
+                                disabled={updateInterview.isPending}
+                                sx={{ minHeight: 44 }}
+                                onClick={() => updateInterview.mutate({ applicationId: detail.data!.id, interviewId: interview.id, status: "cancelled" })}
+                              >
+                                {t("applications.cancelInterview")}
+                              </MuiButton>
+                            </Stack>
+                          )}
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Stack>
+                )}
+
+                <Stack
+                  component="form"
+                  spacing={1}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (interviewAt && Number(interviewDuration) >= 15 && Number(interviewDuration) <= 480 && !addInterview.isPending) {
+                      addInterview.mutate({ id: detail.data!.id });
+                    }
+                  }}
+                >
+                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                    <TextField
+                      select
+                      size="small"
+                      label={t("applications.interviewKind")}
+                      value={interviewKind}
+                      onChange={(event) => setInterviewKind(event.target.value as InterviewKind)}
+                      sx={{ minWidth: { sm: 150 } }}
+                    >
+                      <MenuItem value="video">{t("applications.interviewVideo")}</MenuItem>
+                      <MenuItem value="in_person">{t("applications.interviewInPerson")}</MenuItem>
+                      <MenuItem value="phone">{t("applications.interviewPhone")}</MenuItem>
+                    </TextField>
+                    <TextField
+                      required
+                      size="small"
+                      label={t("applications.interviewAt")}
+                      type="datetime-local"
+                      value={interviewAt}
+                      onChange={(event) => setInterviewAt(event.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                      fullWidth
+                    />
+                    <TextField
+                      required
+                      size="small"
+                      label={t("applications.interviewDuration")}
+                      type="number"
+                      value={interviewDuration}
+                      onChange={(event) => setInterviewDuration(event.target.value)}
+                      inputProps={{ min: 15, max: 480 }}
+                      sx={{ minWidth: { sm: 130 } }}
+                    />
+                  </Stack>
+                  <TextField
+                    size="small"
+                    label={t("applications.interviewLocation")}
+                    value={interviewLocation}
+                    onChange={(event) => setInterviewLocation(event.target.value)}
+                    inputProps={{ maxLength: 500 }}
+                    fullWidth
+                  />
+                  <TextField
+                    size="small"
+                    multiline
+                    minRows={2}
+                    label={t("applications.interviewNotes")}
+                    value={interviewNotes}
+                    onChange={(event) => setInterviewNotes(event.target.value)}
+                    inputProps={{ maxLength: 2000 }}
+                    fullWidth
+                  />
+                  <MuiButton
+                    type="submit"
+                    variant="contained"
+                    disabled={!interviewAt || Number(interviewDuration) < 15 || Number(interviewDuration) > 480 || addInterview.isPending}
+                    sx={{ alignSelf: "flex-start", minHeight: 44 }}
+                  >
+                    {t("applications.scheduleInterview")}
+                  </MuiButton>
+                </Stack>
+              </section>
 
               {detail.data.candidate_phone && (
                 <p className="text-sm">

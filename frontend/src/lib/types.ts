@@ -262,9 +262,24 @@ export interface ApplicationTask {
   created_at: string;
 }
 
+export type InterviewKind = "video" | "in_person" | "phone";
+export type InterviewStatus = "scheduled" | "completed" | "cancelled";
+
+export interface ApplicationInterview {
+  id: string;
+  kind: InterviewKind;
+  status: InterviewStatus;
+  scheduled_at: string;
+  duration_minutes: number;
+  location: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface ApplicationDetail extends ApplicationListItem {
   answers: Answer[];
   tasks: ApplicationTask[];
+  interviews: ApplicationInterview[];
   comments: Comment[];
   history: StatusHistoryEntry[];
 }

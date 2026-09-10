@@ -18,6 +18,7 @@ from app.core.logging import get_logger
 from app.models import (
     Application,
     ApplicationComment,
+    ApplicationInterview,
     ApplicationStatus,
     ApplicationStatusHistory,
     ApplicationTask,
@@ -27,6 +28,9 @@ from app.models import (
 )
 from app.schemas import (
     ApplicationDetail,
+    ApplicationInterviewCreate,
+    ApplicationInterviewOut,
+    ApplicationInterviewUpdate,
     ApplicationListItem,
     ApplicationPage,
     ApplicationTaskCreate,
@@ -495,6 +499,7 @@ async def get_application(
             selectinload(Application.comments).selectinload(ApplicationComment.user),
             selectinload(Application.history).selectinload(ApplicationStatusHistory.user),
             selectinload(Application.tasks),
+            selectinload(Application.interviews),
         )
     )
     row = (await db.execute(stmt)).first()
@@ -534,6 +539,19 @@ async def get_application(
                     task.created_at,
                 ),
             )
+        ],
+        interviews=[
+            ApplicationInterviewOut(
+                id=interview.id,
+                kind=interview.kind,
+                status=interview.status,
+                scheduled_at=interview.scheduled_at,
+                duration_minutes=interview.duration_minutes,
+                location=interview.location,
+                notes=interview.notes,
+                created_at=interview.created_at,
+            )
+            for interview in sorted(app.interviews, key=lambda interview: interview.scheduled_at)
         ],
         comments=[
             CommentOut(
@@ -657,6 +675,86 @@ async def update_task(
         completed_at=task.completed_at,
         created_at=task.created_at,
     )
+
+
+def _clean_interview_text(value: str | None) -> str | None:
+    return value.strip() if value and value.strip() else None
+
+
+def _interview_out(interview: ApplicationInterview) -> ApplicationInterviewOut:
+    return ApplicationInterviewOut(
+        id=interview.id,
+        kind=interview.kind,
+        status=interview.status,
+        scheduled_at=interview.scheduled_at,
+        duration_minutes=interview.duration_minutes,
+        location=interview.location,
+        notes=interview.notes,
+        created_at=interview.created_at,
+    )
+
+
+@router.post(
+    "/{application_id}/interviews",
+    response_model=ApplicationInterviewOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def schedule_interview(
+    application_id: uuid.UUID,
+    payload: ApplicationInterviewCreate,
+    company: CurrentCompany,
+    user: CurrentUser,
+    db: DB,
+) -> ApplicationInterviewOut:
+    """Schedule a recruiter-owned interview within the candidate workspace."""
+
+    await _load_owned(db, application_id, company.id)
+    interview = ApplicationInterview(
+        application_id=application_id,
+        kind=payload.kind,
+        scheduled_at=payload.scheduled_at,
+        duration_minutes=payload.duration_minutes,
+        location=_clean_interview_text(payload.location),
+        notes=_clean_interview_text(payload.notes),
+        created_by=user.id,
+    )
+    db.add(interview)
+    await db.commit()
+    await db.refresh(interview)
+    return _interview_out(interview)
+
+
+@router.patch("/{application_id}/interviews/{interview_id}", response_model=ApplicationInterviewOut)
+async def update_interview(
+    application_id: uuid.UUID,
+    interview_id: uuid.UUID,
+    payload: ApplicationInterviewUpdate,
+    company: CurrentCompany,
+    db: DB,
+) -> ApplicationInterviewOut:
+    """Reschedule or record a terminal interview outcome only within its application."""
+
+    await _load_owned(db, application_id, company.id)
+    interview = await db.scalar(
+        select(ApplicationInterview).where(
+            ApplicationInterview.id == interview_id,
+            ApplicationInterview.application_id == application_id,
+        )
+    )
+    if interview is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+
+    for field in ("kind", "status", "scheduled_at", "duration_minutes"):
+        value = getattr(payload, field)
+        if value is not None:
+            setattr(interview, field, value)
+    if "location" in payload.model_fields_set:
+        interview.location = _clean_interview_text(payload.location)
+    if "notes" in payload.model_fields_set:
+        interview.notes = _clean_interview_text(payload.notes)
+    await db.commit()
+    await db.refresh(interview)
+    return _interview_out(interview)
 
 
 def _enqueue_candidate_notification(

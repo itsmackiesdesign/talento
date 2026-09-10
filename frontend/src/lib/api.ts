@@ -16,6 +16,7 @@ import type {
   BalanceTransactionPage,
   BillingSummary,
   ApplicationDetail,
+  ApplicationInterview,
   ApplicationPage,
   ApplicationTask,
   ApplicationStatusOut,
@@ -302,6 +303,21 @@ export const api = {
       post<ApplicationTask>(`/applications/${id}/tasks`, data),
     updateTask: (applicationId: string, taskId: string, completed: boolean) =>
       patch<ApplicationTask>(`/applications/${applicationId}/tasks/${taskId}`, { completed }),
+    createInterview: (id: string, data: {
+      kind: "video" | "in_person" | "phone";
+      scheduled_at: string;
+      duration_minutes: number;
+      location?: string | null;
+      notes?: string | null;
+    }) => post<ApplicationInterview>(`/applications/${id}/interviews`, data),
+    updateInterview: (applicationId: string, interviewId: string, data: Partial<{
+      kind: "video" | "in_person" | "phone";
+      status: "scheduled" | "completed" | "cancelled";
+      scheduled_at: string;
+      duration_minutes: number;
+      location: string | null;
+      notes: string | null;
+    }>) => patch<ApplicationInterview>(`/applications/${applicationId}/interviews/${interviewId}`, data),
     remove: (id: string) => del<void>(`/applications/${id}`),
     filters: () => get<FilterOptions>("/applications/meta/filters"),
     exportUrl: (params: Record<string, string | undefined>) =>

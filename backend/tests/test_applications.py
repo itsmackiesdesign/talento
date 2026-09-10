@@ -6,7 +6,14 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app.models import Application, ApplicationStatus, ApplicationTask, Candidate, Vacancy
+from app.models import (
+    Application,
+    ApplicationInterview,
+    ApplicationStatus,
+    ApplicationTask,
+    Candidate,
+    Vacancy,
+)
 from tests.conftest import TestSession, make_company
 
 # The three system stages plus the three custom ones every company is seeded with (see
@@ -496,6 +503,55 @@ async def test_status_transition_reason_is_bounded(client):
     )
 
     assert response.status_code == 422
+
+
+async def test_candidate_workspace_interviews_are_scoped_and_updatable(client):
+    owner = await make_company(client, "Owner")
+    other = await make_company(client, "Other")
+    own = await _seed_application(owner["company_id"])
+    foreign = await _seed_application(other["company_id"])
+
+    created = await client.post(
+        f"/api/v1/applications/{own['application_id']}/interviews",
+        json={
+            "kind": "video",
+            "scheduled_at": "2026-09-12T10:30:00Z",
+            "duration_minutes": 45,
+            "location": "https://meet.example.com/talento",
+            "notes": "Проверить опыт с кассой",
+        },
+        headers=owner["headers"],
+    )
+    assert created.status_code == 201, created.text
+    interview = created.json()
+    assert interview["status"] == "scheduled"
+    assert interview["duration_minutes"] == 45
+
+    detail = await client.get(
+        f"/api/v1/applications/{own['application_id']}", headers=owner["headers"]
+    )
+    assert detail.json()["interviews"][0]["notes"] == "Проверить опыт с кассой"
+
+    completed = await client.patch(
+        f"/api/v1/applications/{own['application_id']}/interviews/{interview['id']}",
+        json={"status": "completed", "location": None},
+        headers=owner["headers"],
+    )
+    assert completed.status_code == 200, completed.text
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["location"] is None
+
+    cross_tenant = await client.patch(
+        f"/api/v1/applications/{foreign['application_id']}/interviews/{interview['id']}",
+        json={"status": "cancelled"},
+        headers=other["headers"],
+    )
+    assert cross_tenant.status_code == 404
+
+    async with TestSession() as db:
+        stored = await db.get(ApplicationInterview, uuid.UUID(interview["id"]))
+        assert stored is not None
+        assert stored.status == "completed"
 
 
 async def test_status_from_another_company_is_rejected(client):

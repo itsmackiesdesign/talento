@@ -600,6 +600,38 @@ class ApplicationTaskUpdate(BaseModel):
     completed: bool
 
 
+InterviewKind = Literal["video", "in_person", "phone"]
+InterviewStatus = Literal["scheduled", "completed", "cancelled"]
+
+
+class ApplicationInterviewOut(BaseModel):
+    id: uuid.UUID
+    kind: InterviewKind
+    status: InterviewStatus
+    scheduled_at: datetime
+    duration_minutes: int
+    location: str | None
+    notes: str | None
+    created_at: datetime
+
+
+class ApplicationInterviewCreate(BaseModel):
+    kind: InterviewKind = "video"
+    scheduled_at: datetime
+    duration_minutes: Annotated[int, Field(ge=15, le=480)] = 45
+    location: Annotated[str, Field(max_length=500)] | None = None
+    notes: Annotated[str, Field(max_length=2000)] | None = None
+
+
+class ApplicationInterviewUpdate(BaseModel):
+    kind: InterviewKind | None = None
+    status: InterviewStatus | None = None
+    scheduled_at: datetime | None = None
+    duration_minutes: Annotated[int, Field(ge=15, le=480)] | None = None
+    location: Annotated[str, Field(max_length=500)] | None = None
+    notes: Annotated[str, Field(max_length=2000)] | None = None
+
+
 class StatusHistoryOut(BaseModel):
     # Snapshotted at the time of the transition, not a live lookup — see
     # ApplicationStatusHistory in app/models.py. Stays readable even after the status
@@ -628,6 +660,7 @@ class ApplicationListItem(BaseModel):
 class ApplicationDetail(ApplicationListItem):
     answers: list[dict[str, Any]]
     tasks: list[ApplicationTaskOut]
+    interviews: list[ApplicationInterviewOut]
     comments: list[CommentOut]
     history: list[StatusHistoryOut]
 
