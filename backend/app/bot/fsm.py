@@ -55,6 +55,9 @@ class QuestionSnapshot:
 @dataclass
 class FormState:
     vacancy_id: str
+    # Resolved server-side from a campaign deep link. It survives every question so the
+    # final application, not merely the initial bot start, receives attribution.
+    campaign_id: str | None = None
     questions: list[QuestionSnapshot] = field(default_factory=list)
     current_index: int = 0
     # question_id -> {"value": <canonical value>, "raw": <original>, "skipped": bool}

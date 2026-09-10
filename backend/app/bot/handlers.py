@@ -49,6 +49,7 @@ from app.models import (
     Branch,
     Candidate,
     News,
+    RecruitmentCampaign,
     Vacancy,
 )
 from app.services import telegram as tg
@@ -68,10 +69,10 @@ log = get_logger(__name__)
 # --------------------------------------------------------------------------- plumbing
 
 
-def _hex_to_uuid(value: str) -> uuid.UUID | None:
+def _hex_to_uuid(value: str | None) -> uuid.UUID | None:
     try:
         return uuid.UUID(value)
-    except (ValueError, AttributeError):
+    except (TypeError, ValueError, AttributeError):
         return None
 
 
@@ -242,6 +243,7 @@ async def _show_vacancy_card(
     lang: str,
     vacancy_id: uuid.UUID,
     scope: str | None = None,
+    campaign_code: str | None = None,
 ) -> None:
     vacancy = await db.get(Vacancy, vacancy_id)
     # Tenant check: a deep link carries an id straight from the URL, so verify ownership
@@ -279,7 +281,7 @@ async def _show_vacancy_card(
     await _send_menu(
         message, redis, ctx, tg_user_id,
         card if card is not None else t(lang, "apply_prompt"),
-        keyboards.vacancy_card_keyboard(vacancy.id, scope, lang),
+        keyboards.vacancy_card_keyboard(vacancy.id, scope, lang, campaign_code),
     )
 
 
@@ -632,6 +634,7 @@ async def _start_application(
     tg_user,
     lang: str,
     vacancy_id: uuid.UUID,
+    campaign_code: str | None = None,
 ) -> None:
     vacancy = await db.get(Vacancy, vacancy_id)
     if vacancy is None or vacancy.company_id != ctx.company_id or vacancy.status != "active":
@@ -673,16 +676,36 @@ async def _start_application(
         )
         return
 
+    campaign_id: uuid.UUID | None = None
+    if campaign_code:
+        campaign = await db.scalar(
+            select(RecruitmentCampaign).where(
+                RecruitmentCampaign.company_id == ctx.company_id,
+                RecruitmentCampaign.vacancy_id == vacancy_id,
+                RecruitmentCampaign.code == campaign_code,
+                RecruitmentCampaign.is_active.is_(True),
+            )
+        )
+        if campaign is not None:
+            campaign_id = campaign.id
+
     # Questions are snapshotted in the language the candidate is using right now. Switching
     # language mid-form would be confusing, so the snapshot keeps the form coherent even if
     # they change it afterwards.
     questions = await collect_questions(db, ctx.company_id, vacancy_id, lang)
     if not questions:
         # No form configured — the tap itself is the application.
-        await _create_application(message, ctx, db, redis, lang, vacancy, [], {}, tg_user)
+        await _create_application(
+            message, ctx, db, redis, lang, vacancy, [], {}, tg_user, campaign_id=campaign_id
+        )
         return
 
-    state = fsm.FormState(vacancy_id=vacancy_id.hex, questions=questions, lang=lang)
+    state = fsm.FormState(
+        vacancy_id=vacancy_id.hex,
+        campaign_id=campaign_id.hex if campaign_id else None,
+        questions=questions,
+        lang=lang,
+    )
     await fsm.save(redis, ctx.bot_id, tg_user_id, state)
     await message.answer(t(lang, "form_start"))
     await _ask_current(message, redis, ctx, tg_user_id, state, lang)
@@ -698,6 +721,7 @@ async def _create_application(
     questions: list,
     answers: dict,
     tg_user,
+    campaign_id: uuid.UUID | None = None,
 ) -> None:
     try:
         billing_company = await lock_billable_company(db, ctx.company_id)
@@ -767,6 +791,7 @@ async def _create_application(
         candidate_username=tg_user.username,
         candidate_phone=candidate.phone,
         candidate_language=lang,
+        campaign_id=campaign_id,
     )
     db.add(application)
     try:
@@ -952,10 +977,12 @@ async def _dispatch_action(
             )
 
     elif action.startswith("apply:"):
-        vacancy_id = _hex_to_uuid(action.split(":", 1)[1])
+        parts = action.split(":", 2)
+        vacancy_id = _hex_to_uuid(parts[1])
+        campaign_code = parts[2] if len(parts) == 3 else None
         if vacancy_id:
             await _start_application(
-                message, redis, db, ctx, tg_user_id, tg_user, lang, vacancy_id
+                message, redis, db, ctx, tg_user_id, tg_user, lang, vacancy_id, campaign_code
             )
 
     elif action == "cancel":
@@ -1072,7 +1099,16 @@ async def _dispatch_form_action(
             )
             return
         await _create_application(
-            message, ctx, db, redis, form_lang, vacancy, state.questions, state.answers, tg_user
+            message,
+            ctx,
+            db,
+            redis,
+            form_lang,
+            vacancy,
+            state.questions,
+            state.answers,
+            tg_user,
+            campaign_id=_hex_to_uuid(state.campaign_id),
         )
 
 
@@ -1103,7 +1139,28 @@ async def start_with_payload(
 
     await _greet(message, redis, ctx, lang)
 
-    if payload.startswith("vacancy_"):
+    if payload.startswith("campaign_"):
+        code = payload.removeprefix("campaign_")
+        campaign = await db.scalar(
+            select(RecruitmentCampaign).where(
+                RecruitmentCampaign.company_id == ctx.company_id,
+                RecruitmentCampaign.code == code,
+                RecruitmentCampaign.is_active.is_(True),
+            )
+        )
+        if campaign is not None:
+            await _show_vacancy_card(
+                message,
+                redis,
+                db,
+                ctx,
+                tg_user_id,
+                lang,
+                campaign.vacancy_id,
+                campaign_code=campaign.code,
+            )
+            return
+    elif payload.startswith("vacancy_"):
         vid = _hex_to_uuid(payload.removeprefix("vacancy_"))
         if vid:
             await _show_vacancy_card(message, redis, db, ctx, tg_user_id, lang, vid)

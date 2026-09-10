@@ -32,6 +32,7 @@ import type {
   Me,
   NewsItem,
   Question,
+  RecruitmentCampaign,
   TeamMember,
   TeamInvitation,
   TeamInvitationAccepted,
@@ -254,6 +255,14 @@ export const api = {
     duplicate: (id: string, data: { branch_id?: string | null; title?: string }) =>
       post<Vacancy>(`/vacancies/${id}/duplicate`, data),
     reorder: (ids: string[]) => post<void>("/vacancies/reorder", { ids }),
+  },
+
+  campaigns: {
+    list: (vacancyId?: string) => get<RecruitmentCampaign[]>(`/campaigns${vacancyId ? `?vacancy_id=${encodeURIComponent(vacancyId)}` : ""}`),
+    create: (data: { vacancy_id: string; name: string; source?: string | null }) =>
+      post<RecruitmentCampaign>("/campaigns", data),
+    update: (id: string, data: { is_active: boolean }) =>
+      patch<RecruitmentCampaign>(`/campaigns/${id}`, data),
   },
 
   questions: {

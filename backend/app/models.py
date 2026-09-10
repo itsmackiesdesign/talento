@@ -277,6 +277,9 @@ class Vacancy(Base):
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     branch: Mapped[Branch | None] = relationship(back_populates="vacancies")
+    campaigns: Mapped[list["RecruitmentCampaign"]] = relationship(
+        back_populates="vacancy", cascade="all, delete-orphan"
+    )
     questions: Mapped[list["Question"]] = relationship(
         back_populates="vacancy", cascade="all, delete-orphan"
     )
@@ -473,7 +476,13 @@ class Application(Base):
             name="fk_application_candidate_company",
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["campaign_id", "company_id"],
+            ["recruitment_campaigns.id", "recruitment_campaigns.company_id"],
+            name="fk_application_campaign_company",
+        ),
         Index("ix_applications_company_created", "company_id", "created_at"),
+        Index("ix_applications_campaign", "company_id", "campaign_id"),
     )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
@@ -500,6 +509,7 @@ class Application(Base):
     candidate_username: Mapped[str | None] = mapped_column(Text)
     candidate_phone: Mapped[str | None] = mapped_column(Text)
     candidate_language: Mapped[str | None] = mapped_column(String(5))
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True))
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     vacancy: Mapped[Vacancy] = relationship()
@@ -517,6 +527,33 @@ class Application(Base):
     interviews: Mapped[list["ApplicationInterview"]] = relationship(
         back_populates="application", cascade="all, delete-orphan"
     )
+    campaign: Mapped["RecruitmentCampaign | None"] = relationship(overlaps="candidate")
+
+
+class RecruitmentCampaign(Base):
+    """A Telegram acquisition source bound to one vacancy and tenant."""
+
+    __tablename__ = "recruitment_campaigns"
+    __table_args__ = (
+        UniqueConstraint("code", name="uq_recruitment_campaign_code"),
+        UniqueConstraint("id", "company_id", name="uq_recruitment_campaign_company"),
+        Index("ix_recruitment_campaigns_company_vacancy", "company_id", "vacancy_id", "is_active"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    vacancy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(100))
+    code: Mapped[str] = mapped_column(String(24), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+    vacancy: Mapped[Vacancy] = relationship(back_populates="campaigns")
 
 
 class ApplicationComment(Base):

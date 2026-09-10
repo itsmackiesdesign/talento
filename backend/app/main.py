@@ -18,6 +18,7 @@ from app.api import (
     billing,
     bots,
     branches,
+    campaigns,
     companies,
     dashboard,
     news,
@@ -85,6 +86,7 @@ api_v1.include_router(billing.router)
 api_v1.include_router(companies.router)
 api_v1.include_router(bots.router)
 api_v1.include_router(branches.router)
+api_v1.include_router(campaigns.router)
 api_v1.include_router(vacancies.router)
 api_v1.include_router(questions.router)
 api_v1.include_router(news.router)

@@ -188,6 +188,23 @@ const ru = {
     duplicateTitle: "Дублировать вакансию",
     duplicateDesc: "Копия создаётся черновиком вместе с вопросами анкеты",
   },
+  campaigns: {
+    title: "Кампании и QR",
+    manage: "Кампании и QR",
+    name: "Название кампании",
+    source: "Канал или источник",
+    create: "Создать QR-кампанию",
+    created: "Кампания создана",
+    empty: "Создайте отдельную ссылку для каждого канала, чтобы видеть источник заявок.",
+    active: "Активна",
+    paused: "На паузе",
+    pause: "Поставить на паузу",
+    resume: "Возобновить",
+    copy: "Копировать ссылку",
+    applications: "Заявок: {{count}}",
+    botMissing: "Подключите Telegram-бота, чтобы получить ссылку",
+    qrAlt: "QR-код кампании {{name}}",
+  },
   questions: {
     title: "Конструктор анкеты",
     subtitle: "Бот задаёт эти вопросы кандидату по одному",
@@ -736,6 +753,10 @@ const uz: typeof ru = {
     filterByBranch: "Filial bo‘yicha filtr", duplicateTitle: "Vakansiyani nusxalash",
     duplicateDesc: "Nusxa savollari bilan qoralama sifatida yaratiladi",
   },
+  campaigns: {
+    title: "Kampaniyalar va QR", manage: "Kampaniyalar va QR", name: "Kampaniya nomi", source: "Kanal yoki manba", create: "QR-kampaniya yaratish", created: "Kampaniya yaratildi",
+    empty: "Arizalar manbasini ko‘rish uchun har bir kanal uchun alohida havola yarating.", active: "Faol", paused: "To‘xtatilgan", pause: "To‘xtatish", resume: "Qayta boshlash", copy: "Havolani nusxalash", applications: "Arizalar: {{count}}", botMissing: "Havolani olish uchun Telegram-botni ulang", qrAlt: "{{name}} kampaniyasining QR-kodi",
+  },
   questions: {
     title: "Anketa konstruktori", subtitle: "Bot bu savollarni nomzodga birma-bir beradi",
     common: "Kompaniyaning umumiy savollari", commonDesc: "Barcha vakansiyalar uchun beriladi",
@@ -1195,6 +1216,10 @@ const en: typeof ru = {
     statusDraft: "Draft", statusActive: "Active", statusArchived: "Archived",
     filterByBranch: "Filter by branch", duplicateTitle: "Duplicate vacancy",
     duplicateDesc: "The copy is created as a draft, together with its questions",
+  },
+  campaigns: {
+    title: "Campaigns and QR", manage: "Campaigns and QR", name: "Campaign name", source: "Channel or source", create: "Create QR campaign", created: "Campaign created",
+    empty: "Create a dedicated link per channel to see where applications come from.", active: "Active", paused: "Paused", pause: "Pause", resume: "Resume", copy: "Copy link", applications: "Applications: {{count}}", botMissing: "Connect a Telegram bot to get a link", qrAlt: "QR code for {{name}}",
   },
   questions: {
     title: "Form builder", subtitle: "The bot asks these one at a time",

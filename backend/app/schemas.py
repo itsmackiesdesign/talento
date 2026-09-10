@@ -435,6 +435,28 @@ class VacancyDuplicate(BaseModel):
     title: str | None = None
 
 
+class RecruitmentCampaignCreate(BaseModel):
+    vacancy_id: uuid.UUID
+    name: Annotated[str, Field(min_length=1, max_length=160)]
+    source: Annotated[str, Field(max_length=100)] | None = None
+
+
+class RecruitmentCampaignUpdate(BaseModel):
+    is_active: bool
+
+
+class RecruitmentCampaignOut(BaseModel):
+    id: uuid.UUID
+    vacancy_id: uuid.UUID
+    name: str
+    source: str | None
+    code: str
+    is_active: bool
+    deep_link: str | None
+    applications_count: int
+    created_at: datetime
+
+
 # --------------------------------------------------------------------------- questions
 
 

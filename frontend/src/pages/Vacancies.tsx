@@ -7,9 +7,11 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  QrCode,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import QRCode from "qrcode";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -47,7 +49,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/api";
-import type { Bot, Vacancy, VacancyStatus } from "@/lib/types";
+import type { Bot, RecruitmentCampaign, Vacancy, VacancyStatus } from "@/lib/types";
 import { salaryLabel } from "@/lib/utils";
 
 const NO_BRANCH = "__none__";
@@ -80,6 +82,9 @@ export default function VacanciesPage() {
   const [duplicating, setDuplicating] = useState<Vacancy | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<string>(NO_BRANCH);
   const [deleting, setDeleting] = useState<Vacancy | null>(null);
+  const [campaignVacancy, setCampaignVacancy] = useState<Vacancy | null>(null);
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignSource, setCampaignSource] = useState("");
 
   const company = useQuery({ queryKey: ["company"], queryFn: api.company.get });
   const branches = useQuery({ queryKey: ["branches"], queryFn: api.branches.list });
@@ -97,6 +102,11 @@ export default function VacanciesPage() {
   const vacancies = useQuery({
     queryKey: ["vacancies", branchFilter],
     queryFn: () => api.vacancies.list(vacancyParams),
+  });
+  const campaigns = useQuery({
+    queryKey: ["campaigns", campaignVacancy?.id],
+    queryFn: () => api.campaigns.list(campaignVacancy!.id),
+    enabled: Boolean(campaignVacancy),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["vacancies"] });
@@ -170,6 +180,30 @@ export default function VacanciesPage() {
       toast.error(e.message);
     },
     onSuccess: () => toast.success(t("toast.orderSaved")),
+  });
+
+  const createCampaign = useMutation({
+    mutationFn: () => api.campaigns.create({
+      vacancy_id: campaignVacancy!.id,
+      name: campaignName.trim(),
+      source: campaignSource.trim() || null,
+    }),
+    onSuccess: async () => {
+      setCampaignName("");
+      setCampaignSource("");
+      await qc.invalidateQueries({ queryKey: ["campaigns", campaignVacancy?.id] });
+      toast.success(t("campaigns.created"));
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const updateCampaign = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      api.campaigns.update(id, { is_active: isActive }),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["campaigns", campaignVacancy?.id] });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const list = vacancies.data ?? [];
@@ -265,6 +299,12 @@ export default function VacanciesPage() {
                       <Copy /> {t("vacancies.deepLink")}
                     </DropdownMenuItem>
                   )}
+                  <DropdownMenuItem
+                    disabled={!bot.data || vacancy.status !== "active"}
+                    onSelect={() => setCampaignVacancy(vacancy)}
+                  >
+                    <QrCode /> {t("campaigns.manage")}
+                  </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link to={`/vacancies/${vacancy.id}/questions`}>
                       <ListChecks /> {t("vacancies.questions")}
@@ -379,7 +419,113 @@ export default function VacanciesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={Boolean(campaignVacancy)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCampaignVacancy(null);
+            setCampaignName("");
+            setCampaignSource("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t("campaigns.title")}</DialogTitle>
+            <DialogDescription>{campaignVacancy?.title}</DialogDescription>
+          </DialogHeader>
+
+          <form
+            className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (campaignName.trim() && !createCampaign.isPending) createCampaign.mutate();
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="campaign-name">{t("campaigns.name")}</Label>
+              <Input id="campaign-name" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} maxLength={160} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="campaign-source">{t("campaigns.source")}</Label>
+              <Input id="campaign-source" value={campaignSource} onChange={(event) => setCampaignSource(event.target.value)} maxLength={100} />
+            </div>
+            <Button type="submit" disabled={!campaignName.trim() || createCampaign.isPending} className="sm:col-span-2 sm:w-fit">
+              <Plus className="h-4 w-4" /> {t("campaigns.create")}
+            </Button>
+          </form>
+
+          {campaigns.isPending ? (
+            <Skeleton className="h-32" />
+          ) : campaigns.data?.length === 0 ? (
+            <p className="text-sm text-muted-foreground">{t("campaigns.empty")}</p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(campaigns.data ?? []).map((campaign) => (
+                <CampaignCard
+                  key={campaign.id}
+                  campaign={campaign}
+                  t={t}
+                  pending={updateCampaign.isPending}
+                  onToggle={() => updateCampaign.mutate({ id: campaign.id, isActive: !campaign.is_active })}
+                />
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
+  );
+}
+
+function CampaignCard({
+  campaign,
+  t,
+  pending,
+  onToggle,
+}: {
+  campaign: RecruitmentCampaign;
+  t: (key: string, options?: Record<string, unknown>) => string;
+  pending: boolean;
+  onToggle: () => void;
+}) {
+  const [qrSrc, setQrSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!campaign.deep_link) return;
+    let alive = true;
+    QRCode.toDataURL(campaign.deep_link, { width: 240, margin: 1, color: { dark: "#050507", light: "#FFFFFF" } })
+      .then((value) => alive && setQrSrc(value))
+      .catch(() => alive && setQrSrc(null));
+    return () => { alive = false; };
+  }, [campaign.deep_link]);
+
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-medium">{campaign.name}</p>
+          {campaign.source && <p className="truncate text-xs text-muted-foreground">{campaign.source}</p>}
+        </div>
+        <Badge variant={campaign.is_active ? "success" : "outline"}>{campaign.is_active ? t("campaigns.active") : t("campaigns.paused")}</Badge>
+      </div>
+      <div className="mt-3 flex gap-3">
+        {qrSrc && <img src={qrSrc} alt={t("campaigns.qrAlt", { name: campaign.name })} className="h-24 w-24 rounded bg-white p-1" />}
+        <div className="min-w-0 flex-1 text-sm">
+          <p>{t("campaigns.applications", { count: campaign.applications_count })}</p>
+          <p className="mt-1 break-all text-xs text-muted-foreground">{campaign.deep_link ?? t("campaigns.botMissing")}</p>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={!campaign.deep_link} onClick={() => campaign.deep_link && navigator.clipboard.writeText(campaign.deep_link).then(() => toast.success(t("toast.linkCopied")))}>
+          <Copy className="h-4 w-4" /> {t("campaigns.copy")}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={pending} onClick={onToggle}>
+          {campaign.is_active ? t("campaigns.pause") : t("campaigns.resume")}
+        </Button>
+      </div>
+    </div>
   );
 }
 

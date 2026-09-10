@@ -7,7 +7,7 @@ only the network is faked.
 
 from sqlalchemy import select
 
-from app.models import Application, ApplicationStatus, Question, Vacancy
+from app.models import Application, ApplicationStatus, Question, RecruitmentCampaign, Vacancy
 from tests.conftest import TestSession
 from tests.conftest import feed as _feed
 
@@ -51,6 +51,28 @@ async def test_vacancy_card_shows_details(bot, session, tenant):
 async def test_deep_link_opens_vacancy_card(bot, session, tenant):
     await _feed(bot, tenant, text=f"/start vacancy_{tenant['vacancy_id'].hex}")
     assert any("Бариста" in text for text in session.texts)
+
+
+async def test_campaign_deep_link_attributes_the_completed_application(bot, session, tenant):
+    async with TestSession() as db:
+        campaign = RecruitmentCampaign(
+            company_id=tenant["company_id"],
+            vacancy_id=tenant["vacancy_id"],
+            name="QR у входа",
+            source="offline",
+            code="doorQr2026A",
+        )
+        db.add(campaign)
+        await db.commit()
+        campaign_id = campaign.id
+
+    await _feed(bot, tenant, text="/start campaign_doorQr2026A")
+    await _feed(bot, tenant, data=f"apply:{tenant['vacancy_id'].hex}:doorQr2026A")
+
+    async with TestSession() as db:
+        application = await db.scalar(select(Application))
+    assert application is not None
+    assert application.campaign_id == campaign_id
 
 
 async def test_apply_without_questions_creates_application(bot, session, tenant):

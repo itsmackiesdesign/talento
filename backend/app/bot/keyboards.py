@@ -224,11 +224,14 @@ def back_only_keyboard(lang: str, action: str = "menu"):
 
 
 def vacancy_card_keyboard(
-    vacancy_id: uuid.UUID, scope: str, lang: str
+    vacancy_id: uuid.UUID, scope: str, lang: str, campaign_code: str | None = None
 ) -> tuple[ReplyKeyboardMarkup, dict]:
+    apply_action = (
+        f"apply:{vacancy_id.hex}:{campaign_code}" if campaign_code else f"apply:{vacancy_id.hex}"
+    )
     return _build(
         [
-            [(t(lang, "apply"), f"apply:{vacancy_id.hex}")],
+            [(t(lang, "apply"), apply_action)],
             [(t(lang, "back"), f"back:list:{scope}")],
         ]
     )

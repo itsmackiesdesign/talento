@@ -188,6 +188,18 @@ export interface Vacancy {
   deep_link: string | null;
 }
 
+export interface RecruitmentCampaign {
+  id: string;
+  vacancy_id: string;
+  name: string;
+  source: string | null;
+  code: string;
+  is_active: boolean;
+  deep_link: string | null;
+  applications_count: number;
+  created_at: string;
+}
+
 export interface Question {
   id: string;
   vacancy_id: string | null;
