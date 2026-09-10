@@ -14,10 +14,13 @@ import type { FocusEvent, FormEvent, PointerEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { BrandLogo, TalentoMark } from "@/components/brand-logo";
-import type { AuthSceneSignals, AuthVisualState } from "@/components/auth-scene";
+import type { AuthSceneSignals, AuthVisualState } from "@/components/auth-scene-types";
 import { useColorMode } from "@/theme";
 
-const AuthScene = lazy(() => import("@/components/auth-scene"));
+const AuthScene = lazy(async () => {
+  // @ts-expect-error This visual-only JSX module is intentionally excluded from the application type graph.
+  return import("@/components/auth-scene.jsx");
+});
 
 type RenderPath = "checking" | "live" | "fallback";
 
@@ -163,6 +166,18 @@ export function AuthShell({
             position: "absolute",
             inset: 0,
             zIndex: -2,
+            opacity: 0.2,
+            background: "url('/assets/media/talento-human-frames.webp') center / cover no-repeat",
+            filter: "saturate(.55) contrast(1.1)",
+            maskImage: "linear-gradient(90deg, transparent 0%, #000 12%, #000 88%, transparent 100%)",
+          }}
+        />
+        <Box
+          aria-hidden
+          sx={{
+            position: "absolute",
+            inset: 0,
+            zIndex: -1,
             opacity: visualState === "error" ? 1 : 0,
             transition: visualState === "error"
               ? "opacity 130ms cubic-bezier(.2,.8,.2,1)"
@@ -179,6 +194,7 @@ export function AuthShell({
             position: "absolute",
             inset: { lg: "72px 0 170px", xl: "78px 0 180px" },
             zIndex: 0,
+            background: "radial-gradient(ellipse 72% 66% at 50% 44%, rgba(5, 5, 7, 0.66) 0%, rgba(5, 5, 7, 0.38) 44%, rgba(5, 5, 7, 0) 78%)",
           }}
         >
           <Box
