@@ -602,6 +602,20 @@ class ApplicationTaskUpdate(BaseModel):
 
 InterviewKind = Literal["video", "in_person", "phone"]
 InterviewStatus = Literal["scheduled", "completed", "cancelled"]
+InterviewRecommendation = Literal["strong_yes", "yes", "no", "strong_no"]
+
+
+class ApplicationInterviewScorecardOut(BaseModel):
+    rating: int
+    recommendation: InterviewRecommendation
+    summary: str
+    created_at: datetime
+
+
+class ApplicationInterviewScorecardCreate(BaseModel):
+    rating: Annotated[int, Field(ge=1, le=5)]
+    recommendation: InterviewRecommendation
+    summary: Annotated[str, Field(min_length=1, max_length=2000)]
 
 
 class ApplicationInterviewOut(BaseModel):
@@ -612,6 +626,7 @@ class ApplicationInterviewOut(BaseModel):
     duration_minutes: int
     location: str | None
     notes: str | None
+    scorecard: ApplicationInterviewScorecardOut | None
     created_at: datetime
 
 

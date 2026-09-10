@@ -264,6 +264,14 @@ export interface ApplicationTask {
 
 export type InterviewKind = "video" | "in_person" | "phone";
 export type InterviewStatus = "scheduled" | "completed" | "cancelled";
+export type InterviewRecommendation = "strong_yes" | "yes" | "no" | "strong_no";
+
+export interface ApplicationInterviewScorecard {
+  rating: number;
+  recommendation: InterviewRecommendation;
+  summary: string;
+  created_at: string;
+}
 
 export interface ApplicationInterview {
   id: string;
@@ -273,6 +281,7 @@ export interface ApplicationInterview {
   duration_minutes: number;
   location: string | null;
   notes: string | null;
+  scorecard: ApplicationInterviewScorecard | null;
   created_at: string;
 }
 

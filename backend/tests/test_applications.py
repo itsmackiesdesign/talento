@@ -554,6 +554,73 @@ async def test_candidate_workspace_interviews_are_scoped_and_updatable(client):
         assert stored.status == "completed"
 
 
+async def test_completed_interview_accepts_one_tenant_scoped_scorecard(client):
+    owner = await make_company(client, "Owner")
+    other = await make_company(client, "Other")
+    own = await _seed_application(owner["company_id"])
+    foreign = await _seed_application(other["company_id"])
+
+    created = await client.post(
+        f"/api/v1/applications/{own['application_id']}/interviews",
+        json={
+            "kind": "in_person",
+            "scheduled_at": "2026-09-12T10:30:00Z",
+            "duration_minutes": 45,
+        },
+        headers=owner["headers"],
+    )
+    assert created.status_code == 201, created.text
+    interview_id = created.json()["id"]
+    scorecard_path = (
+        f"/api/v1/applications/{own['application_id']}/interviews/{interview_id}/scorecard"
+    )
+
+    premature = await client.post(
+        scorecard_path,
+        json={"rating": 5, "recommendation": "strong_yes", "summary": "Отличный опыт"},
+        headers=owner["headers"],
+    )
+    assert premature.status_code == 409
+
+    completed = await client.patch(
+        f"/api/v1/applications/{own['application_id']}/interviews/{interview_id}",
+        json={"status": "completed"},
+        headers=owner["headers"],
+    )
+    assert completed.status_code == 200, completed.text
+
+    saved = await client.post(
+        scorecard_path,
+        json={
+            "rating": 5,
+            "recommendation": "strong_yes",
+            "summary": "Сильная коммуникация и релевантный опыт",
+        },
+        headers=owner["headers"],
+    )
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["recommendation"] == "strong_yes"
+
+    detail = await client.get(
+        f"/api/v1/applications/{own['application_id']}", headers=owner["headers"]
+    )
+    assert detail.json()["interviews"][0]["scorecard"]["rating"] == 5
+
+    duplicate = await client.post(
+        scorecard_path,
+        json={"rating": 4, "recommendation": "yes", "summary": "Повтор"},
+        headers=owner["headers"],
+    )
+    assert duplicate.status_code == 409
+
+    cross_tenant = await client.post(
+        f"/api/v1/applications/{foreign['application_id']}/interviews/{interview_id}/scorecard",
+        json={"rating": 4, "recommendation": "yes", "summary": "Чужая заявка"},
+        headers=other["headers"],
+    )
+    assert cross_tenant.status_code == 404
+
+
 async def test_status_from_another_company_is_rejected(client):
     owner = await make_company(client)
     other = await make_company(client, "Other")

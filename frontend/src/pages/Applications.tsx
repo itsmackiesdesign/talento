@@ -76,6 +76,7 @@ import type {
   ApplicationPage,
   ApplicationStatusOut,
   InterviewKind,
+  InterviewRecommendation,
 } from "@/lib/types";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 
@@ -345,6 +346,10 @@ export default function ApplicationsPage() {
   const [interviewDuration, setInterviewDuration] = useState("45");
   const [interviewLocation, setInterviewLocation] = useState("");
   const [interviewNotes, setInterviewNotes] = useState("");
+  const [scorecardInterviewId, setScorecardInterviewId] = useState<string | null>(null);
+  const [scorecardRating, setScorecardRating] = useState("4");
+  const [scorecardRecommendation, setScorecardRecommendation] = useState<InterviewRecommendation>("yes");
+  const [scorecardSummary, setScorecardSummary] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState(ALL);
@@ -567,6 +572,24 @@ export default function ApplicationsPage() {
     }) => api.applications.updateInterview(applicationId, interviewId, { status }),
     onSuccess: async (_result, variables) => {
       await qc.invalidateQueries({ queryKey: ["application", variables.applicationId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const addInterviewScorecard = useMutation({
+    mutationFn: ({ applicationId, interviewId }: { applicationId: string; interviewId: string }) =>
+      api.applications.createInterviewScorecard(applicationId, interviewId, {
+        rating: Number(scorecardRating),
+        recommendation: scorecardRecommendation,
+        summary: scorecardSummary.trim(),
+      }),
+    onSuccess: async (_result, variables) => {
+      setScorecardInterviewId(null);
+      setScorecardRating("4");
+      setScorecardRecommendation("yes");
+      setScorecardSummary("");
+      await qc.invalidateQueries({ queryKey: ["application", variables.applicationId] });
+      toast.success(t("applications.scorecardSaved"));
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -1148,6 +1171,28 @@ export default function ApplicationsPage() {
                           </Typography>
                           {interview.location && <Typography variant="body2" color="text.secondary">{interview.location}</Typography>}
                           {interview.notes && <Typography variant="body2" color="text.secondary">{interview.notes}</Typography>}
+                          {interview.scorecard && (
+                            <Paper variant="outlined" sx={{ p: 1, borderRadius: 1.25, bgcolor: "action.hover" }}>
+                              <Stack spacing={0.5}>
+                                <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1}>
+                                  <Typography variant="caption" fontWeight={800} textTransform="uppercase">
+                                    {t("applications.scorecard")}
+                                  </Typography>
+                                  <Chip size="small" label={`${interview.scorecard.rating}/5`} color="primary" variant="outlined" />
+                                </Stack>
+                                <Typography variant="body2" fontWeight={700}>
+                                  {interview.scorecard.recommendation === "strong_yes"
+                                    ? t("applications.recommendStrongYes")
+                                    : interview.scorecard.recommendation === "yes"
+                                      ? t("applications.recommendYes")
+                                      : interview.scorecard.recommendation === "no"
+                                        ? t("applications.recommendNo")
+                                        : t("applications.recommendStrongNo")}
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary">{interview.scorecard.summary}</Typography>
+                              </Stack>
+                            </Paper>
+                          )}
                           {interview.status === "scheduled" && (
                             <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                               <MuiButton
@@ -1169,6 +1214,67 @@ export default function ApplicationsPage() {
                                 {t("applications.cancelInterview")}
                               </MuiButton>
                             </Stack>
+                          )}
+                          {interview.status === "completed" && !interview.scorecard && (
+                            <>
+                              <MuiButton
+                                size="small"
+                                variant="outlined"
+                                disabled={addInterviewScorecard.isPending}
+                                sx={{ alignSelf: "flex-start", minHeight: 44 }}
+                                onClick={() => setScorecardInterviewId((current) => current === interview.id ? null : interview.id)}
+                              >
+                                {t("applications.addScorecard")}
+                              </MuiButton>
+                              {scorecardInterviewId === interview.id && (
+                                <Stack spacing={1} component="form" onSubmit={(event) => {
+                                  event.preventDefault();
+                                  if (scorecardSummary.trim() && !addInterviewScorecard.isPending) {
+                                    addInterviewScorecard.mutate({ applicationId: detail.data!.id, interviewId: interview.id });
+                                  }
+                                }}>
+                                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                                    <TextField
+                                      select
+                                      size="small"
+                                      label={t("applications.scorecardRating")}
+                                      value={scorecardRating}
+                                      onChange={(event) => setScorecardRating(event.target.value)}
+                                      sx={{ minWidth: { sm: 140 } }}
+                                    >
+                                      {[5, 4, 3, 2, 1].map((rating) => <MenuItem key={rating} value={rating}>{rating}/5</MenuItem>)}
+                                    </TextField>
+                                    <TextField
+                                      select
+                                      size="small"
+                                      label={t("applications.scorecardRecommendation")}
+                                      value={scorecardRecommendation}
+                                      onChange={(event) => setScorecardRecommendation(event.target.value as InterviewRecommendation)}
+                                      fullWidth
+                                    >
+                                      <MenuItem value="strong_yes">{t("applications.recommendStrongYes")}</MenuItem>
+                                      <MenuItem value="yes">{t("applications.recommendYes")}</MenuItem>
+                                      <MenuItem value="no">{t("applications.recommendNo")}</MenuItem>
+                                      <MenuItem value="strong_no">{t("applications.recommendStrongNo")}</MenuItem>
+                                    </TextField>
+                                  </Stack>
+                                  <TextField
+                                    required
+                                    size="small"
+                                    multiline
+                                    minRows={2}
+                                    label={t("applications.scorecardSummary")}
+                                    value={scorecardSummary}
+                                    onChange={(event) => setScorecardSummary(event.target.value)}
+                                    inputProps={{ maxLength: 2000 }}
+                                    fullWidth
+                                  />
+                                  <MuiButton type="submit" variant="contained" disabled={!scorecardSummary.trim() || addInterviewScorecard.isPending} sx={{ alignSelf: "flex-start", minHeight: 44 }}>
+                                    {t("applications.saveScorecard")}
+                                  </MuiButton>
+                                </Stack>
+                              )}
+                            </>
                           )}
                         </Stack>
                       </Paper>

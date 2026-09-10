@@ -593,6 +593,36 @@ class ApplicationInterview(Base):
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     application: Mapped[Application] = relationship(back_populates="interviews")
+    scorecard: Mapped["ApplicationInterviewScorecard | None"] = relationship(
+        back_populates="interview", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class ApplicationInterviewScorecard(Base):
+    """An immutable recruiter assessment recorded after a completed interview."""
+
+    __tablename__ = "application_interview_scorecards"
+    __table_args__ = (
+        CheckConstraint("rating BETWEEN 1 AND 5", name="ck_interview_scorecard_rating"),
+        CheckConstraint(
+            "recommendation IN ('strong_yes', 'yes', 'no', 'strong_no')",
+            name="ck_interview_scorecard_recommendation",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    interview_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("application_interviews.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    rating: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    recommendation: Mapped[str] = mapped_column(String(20), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+    interview: Mapped[ApplicationInterview] = relationship(back_populates="scorecard")
 
 
 class ApplicationStatusHistory(Base):

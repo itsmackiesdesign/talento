@@ -17,6 +17,7 @@ import type {
   BillingSummary,
   ApplicationDetail,
   ApplicationInterview,
+  ApplicationInterviewScorecard,
   ApplicationPage,
   ApplicationTask,
   ApplicationStatusOut,
@@ -318,6 +319,14 @@ export const api = {
       location: string | null;
       notes: string | null;
     }>) => patch<ApplicationInterview>(`/applications/${applicationId}/interviews/${interviewId}`, data),
+    createInterviewScorecard: (applicationId: string, interviewId: string, data: {
+      rating: number;
+      recommendation: "strong_yes" | "yes" | "no" | "strong_no";
+      summary: string;
+    }) => post<ApplicationInterviewScorecard>(
+      `/applications/${applicationId}/interviews/${interviewId}/scorecard`,
+      data,
+    ),
     remove: (id: string) => del<void>(`/applications/${id}`),
     filters: () => get<FilterOptions>("/applications/meta/filters"),
     exportUrl: (params: Record<string, string | undefined>) =>

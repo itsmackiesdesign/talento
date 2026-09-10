@@ -9,6 +9,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import Select, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,6 +20,7 @@ from app.models import (
     Application,
     ApplicationComment,
     ApplicationInterview,
+    ApplicationInterviewScorecard,
     ApplicationStatus,
     ApplicationStatusHistory,
     ApplicationTask,
@@ -30,6 +32,8 @@ from app.schemas import (
     ApplicationDetail,
     ApplicationInterviewCreate,
     ApplicationInterviewOut,
+    ApplicationInterviewScorecardCreate,
+    ApplicationInterviewScorecardOut,
     ApplicationInterviewUpdate,
     ApplicationListItem,
     ApplicationPage,
@@ -499,7 +503,7 @@ async def get_application(
             selectinload(Application.comments).selectinload(ApplicationComment.user),
             selectinload(Application.history).selectinload(ApplicationStatusHistory.user),
             selectinload(Application.tasks),
-            selectinload(Application.interviews),
+            selectinload(Application.interviews).selectinload(ApplicationInterview.scorecard),
         )
     )
     row = (await db.execute(stmt)).first()
@@ -549,6 +553,7 @@ async def get_application(
                 duration_minutes=interview.duration_minutes,
                 location=interview.location,
                 notes=interview.notes,
+                scorecard=_scorecard_out(interview.__dict__.get("scorecard")),
                 created_at=interview.created_at,
             )
             for interview in sorted(app.interviews, key=lambda interview: interview.scheduled_at)
@@ -681,6 +686,19 @@ def _clean_interview_text(value: str | None) -> str | None:
     return value.strip() if value and value.strip() else None
 
 
+def _scorecard_out(
+    scorecard: ApplicationInterviewScorecard | None,
+) -> ApplicationInterviewScorecardOut | None:
+    if scorecard is None:
+        return None
+    return ApplicationInterviewScorecardOut(
+        rating=scorecard.rating,
+        recommendation=scorecard.recommendation,
+        summary=scorecard.summary,
+        created_at=scorecard.created_at,
+    )
+
+
 def _interview_out(interview: ApplicationInterview) -> ApplicationInterviewOut:
     return ApplicationInterviewOut(
         id=interview.id,
@@ -690,6 +708,9 @@ def _interview_out(interview: ApplicationInterview) -> ApplicationInterviewOut:
         duration_minutes=interview.duration_minutes,
         location=interview.location,
         notes=interview.notes,
+        # Command endpoints do not eager-load the relationship. Reading from __dict__
+        # avoids accidental async lazy I/O while detail queries still include it.
+        scorecard=_scorecard_out(interview.__dict__.get("scorecard")),
         created_at=interview.created_at,
     )
 
@@ -722,6 +743,68 @@ async def schedule_interview(
     await db.commit()
     await db.refresh(interview)
     return _interview_out(interview)
+
+
+@router.post(
+    "/{application_id}/interviews/{interview_id}/scorecard",
+    response_model=ApplicationInterviewScorecardOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def record_interview_scorecard(
+    application_id: uuid.UUID,
+    interview_id: uuid.UUID,
+    payload: ApplicationInterviewScorecardCreate,
+    company: CurrentCompany,
+    user: CurrentUser,
+    db: DB,
+) -> ApplicationInterviewScorecardOut:
+    """Record one immutable assessment only after the interview has been completed."""
+
+    await _load_owned(db, application_id, company.id)
+    interview = await db.scalar(
+        select(ApplicationInterview).where(
+            ApplicationInterview.id == interview_id,
+            ApplicationInterview.application_id == application_id,
+        )
+    )
+    if interview is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Interview not found")
+    if interview.status != "completed":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Complete the interview before recording a scorecard"
+        )
+
+    existing = await db.scalar(
+        select(ApplicationInterviewScorecard.id).where(
+            ApplicationInterviewScorecard.interview_id == interview.id
+        )
+    )
+    if existing is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Interview scorecard already recorded")
+
+    scorecard = ApplicationInterviewScorecard(
+        interview_id=interview.id,
+        rating=payload.rating,
+        recommendation=payload.recommendation,
+        summary=payload.summary.strip(),
+        created_by=user.id,
+    )
+    db.add(scorecard)
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The unique FK is the authoritative guard for two concurrent submissions.
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Interview scorecard already recorded"
+        ) from None
+    await db.refresh(scorecard)
+    return ApplicationInterviewScorecardOut(
+        rating=scorecard.rating,
+        recommendation=scorecard.recommendation,
+        summary=scorecard.summary,
+        created_at=scorecard.created_at,
+    )
 
 
 @router.patch("/{application_id}/interviews/{interview_id}", response_model=ApplicationInterviewOut)
