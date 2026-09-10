@@ -40,6 +40,9 @@ log = get_logger(__name__)
 
 TELEGRAM_CAPTION_LIMIT = 1024
 TELEGRAM_MESSAGE_LIMIT = 4000
+TELEGRAM_NOTIFICATION_MAX_RETRIES = 3
+TELEGRAM_NOTIFICATION_RETRY_BASE_SECONDS = 30
+TELEGRAM_NOTIFICATION_RETRY_MAX_SECONDS = 300
 _HTML_TAG = re.compile(r"<[^>]+>")
 
 
@@ -149,13 +152,68 @@ def process_telegram_update(self, inbox_id: str) -> str:
         raise self.retry(exc=exc, countdown=countdown) from exc
 
 
-@celery_app.task(name="talento.notify_new_application", max_retries=3, default_retry_delay=30)
-def notify_new_application(application_id: str) -> str:
-    return asyncio.run(_run_with_fresh_db(_notify_new_application(application_id)))
+def _notification_retry_countdown(error: tg.TelegramError, retries: int) -> int:
+    """Use Telegram's explicit limit when available, otherwise bounded exponential backoff."""
+    if error.retry_after is not None:
+        return min(TELEGRAM_NOTIFICATION_RETRY_MAX_SECONDS, error.retry_after)
+    backoff = TELEGRAM_NOTIFICATION_RETRY_BASE_SECONDS * (2**retries)
+    return min(TELEGRAM_NOTIFICATION_RETRY_MAX_SECONDS, backoff)
+
+
+def _retry_notification_task(
+    task: Any,
+    notification: str,
+    application_id: str,
+    error: tg.TelegramError,
+) -> str:
+    """Schedule safe delivery retries and leave permanent/exhausted errors observable."""
+    code = error.code
+    if not tg.is_retryable(error):
+        log.warning(
+            "telegram_notification_permanent_failure",
+            notification=notification,
+            application_id=application_id,
+            telegram_code=code,
+        )
+        return f"failed: permanent Telegram error ({code or 'transport'})"
+
+    retries = task.request.retries
+    if retries >= TELEGRAM_NOTIFICATION_MAX_RETRIES:
+        log.error(
+            "telegram_notification_retry_exhausted",
+            notification=notification,
+            application_id=application_id,
+            telegram_code=code,
+            retries=retries,
+        )
+        return "failed: retry limit exhausted"
+
+    countdown = _notification_retry_countdown(error, retries)
+    log.warning(
+        "telegram_notification_retry_scheduled",
+        notification=notification,
+        application_id=application_id,
+        telegram_code=code,
+        retry=retries + 1,
+        countdown=countdown,
+    )
+    raise task.retry(exc=error, countdown=countdown, max_retries=TELEGRAM_NOTIFICATION_MAX_RETRIES)
+
+
+@celery_app.task(
+    bind=True,
+    name="talento.notify_new_application",
+    max_retries=TELEGRAM_NOTIFICATION_MAX_RETRIES,
+)
+def notify_new_application(self, application_id: str) -> str:
+    try:
+        return asyncio.run(_run_with_fresh_db(_notify_new_application(application_id)))
+    except tg.TelegramError as exc:
+        return _retry_notification_task(self, "new_application", application_id, exc)
 
 
 def _panel_button(application_id: uuid.UUID) -> dict[str, Any] | None:
-    panel_url = f'{settings.FRONTEND_URL.rstrip("/")}/applications/{application_id}'
+    panel_url = f"{settings.FRONTEND_URL.rstrip('/')}/applications/{application_id}"
     parsed = urlparse(panel_url)
     hostname = (parsed.hostname or "").lower()
     if parsed.scheme != "https" or hostname in {"localhost", "127.0.0.1", "::1"}:
@@ -185,6 +243,8 @@ async def _send_hr_application_notification(
                 reply_markup=reply_markup,
             )
         except tg.TelegramError as exc:
+            if tg.is_retryable(exc):
+                raise
             # A local/private storage URL may not be reachable by Telegram. The HR should
             # still receive the application, so retry as text with the same panel button.
             log.warning(
@@ -246,8 +306,7 @@ def _common_answers_text(
         # New snapshots carry their scope. The ID fallback keeps applications submitted
         # before this release useful while the original common question still exists.
         is_common = answer.get("is_common") is True or (
-            "is_common" not in answer
-            and answer.get("question_id") in current_common_question_ids
+            "is_common" not in answer and answer.get("question_id") in current_common_question_ids
         )
         if not is_common or answer.get("profile_field") == "candidate_photo":
             continue
@@ -300,27 +359,35 @@ async def _notify_new_application(application_id: str) -> str:
     common_answers = _common_answers_text(application.answers or [], common_ids)
     reply_markup = _panel_button(application.id)
 
-    try:
-        await _send_hr_application_notification(
-            chat_id,
-            summary,
-            common_answers,
-            profile.photo_url,
-            reply_markup,
-        )
-    except tg.TelegramError as exc:
-        log.warning("hr_notify_failed", chat_id=chat_id, error=exc.description)
-        return f"failed: {exc.description}"
+    await _send_hr_application_notification(
+        chat_id,
+        summary,
+        common_answers,
+        profile.photo_url,
+        reply_markup,
+    )
 
     log.info("hr_group_notified", application_id=application_id, chat_id=chat_id)
     return "sent to group"
 
 
-@celery_app.task(name="talento.notify_candidate_status", max_retries=3, default_retry_delay=30)
-def notify_candidate_status(application_id: str, from_status_id: str, to_status_id: str) -> str:
-    return asyncio.run(
-        _run_with_fresh_db(_notify_candidate_status(application_id, to_status_id))
-    )
+@celery_app.task(
+    bind=True,
+    name="talento.notify_candidate_status",
+    max_retries=TELEGRAM_NOTIFICATION_MAX_RETRIES,
+)
+def notify_candidate_status(
+    self,
+    application_id: str,
+    from_status_id: str,
+    to_status_id: str,
+) -> str:
+    try:
+        return asyncio.run(
+            _run_with_fresh_db(_notify_candidate_status(application_id, to_status_id))
+        )
+    except tg.TelegramError as exc:
+        return _retry_notification_task(self, "candidate_status", application_id, exc)
 
 
 async def _notify_candidate_status(application_id: str, to_status_id: str) -> str:
@@ -357,13 +424,5 @@ async def _notify_candidate_status(application_id: str, to_status_id: str) -> st
         vacancy=escape(vacancy_title),
         status=escape(status_text),
     )
-    try:
-        await tg.send_message(token, telegram_user_id, text)
-    except tg.TelegramError as exc:
-        log.warning(
-            "candidate_notify_failed",
-            application_id=application_id,
-            error=exc.description,
-        )
-        return f"failed: {exc.description}"
+    await tg.send_message(token, telegram_user_id, text)
     return "sent"

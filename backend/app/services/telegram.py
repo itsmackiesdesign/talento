@@ -14,10 +14,21 @@ TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
 
 class TelegramError(RuntimeError):
-    def __init__(self, description: str, code: int | None = None):
+    def __init__(self, description: str, code: int | None = None, retry_after: int | None = None):
         super().__init__(description)
         self.description = description
         self.code = code
+        self.retry_after = retry_after
+
+
+def is_retryable(error: TelegramError) -> bool:
+    """Return whether Telegram delivery can be retried without changing the request.
+
+    A transport failure has no HTTP status and may have happened before Telegram saw the
+    request. Telegram's 429 and 5xx responses are temporary. Other 4xx responses are
+    permanent for the current message/chat and must not burn worker capacity.
+    """
+    return error.code is None or error.code == 429 or 500 <= error.code <= 599
 
 
 async def call(token: str, method: str, **params: Any) -> Any:
@@ -34,7 +45,13 @@ async def call(token: str, method: str, **params: Any) -> Any:
     except ValueError:
         raise TelegramError(f"Telegram returned a non-JSON response ({resp.status_code})") from None
     if not body.get("ok"):
-        raise TelegramError(body.get("description", "Unknown Telegram error"), resp.status_code)
+        parameters = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
+        retry_after = parameters.get("retry_after")
+        raise TelegramError(
+            body.get("description", "Unknown Telegram error"),
+            resp.status_code,
+            retry_after if isinstance(retry_after, int) and retry_after > 0 else None,
+        )
     return body.get("result")
 
 

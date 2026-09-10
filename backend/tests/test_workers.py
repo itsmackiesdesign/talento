@@ -6,6 +6,66 @@ import pytest
 from app.workers import tasks
 
 
+class RetryScheduled(Exception):
+    pass
+
+
+class RetryTask:
+    def __init__(self, retries: int = 0):
+        self.request = SimpleNamespace(retries=retries)
+        self.calls: list[dict] = []
+
+    def retry(self, **kwargs):
+        self.calls.append(kwargs)
+        raise RetryScheduled()
+
+
+def test_retryable_telegram_notification_uses_bounded_exponential_backoff():
+    task = RetryTask(retries=2)
+    error = tasks.tg.TelegramError("Telegram is unavailable", 503)
+
+    with pytest.raises(RetryScheduled):
+        tasks._retry_notification_task(task, "new_application", "app-id", error)
+
+    assert task.calls == [{"exc": error, "countdown": 120, "max_retries": 3}]
+
+
+def test_telegram_rate_limit_honours_retry_after_with_a_safe_cap():
+    task = RetryTask()
+    error = tasks.tg.TelegramError("Too Many Requests", 429, retry_after=900)
+
+    with pytest.raises(RetryScheduled):
+        tasks._retry_notification_task(task, "candidate_status", "app-id", error)
+
+    assert task.calls[0]["countdown"] == 300
+
+
+def test_permanent_or_exhausted_telegram_notification_does_not_retry():
+    permanent = RetryTask()
+    assert (
+        tasks._retry_notification_task(
+            permanent,
+            "new_application",
+            "app-id",
+            tasks.tg.TelegramError("Forbidden", 403),
+        )
+        == "failed: permanent Telegram error (403)"
+    )
+    assert permanent.calls == []
+
+    exhausted = RetryTask(retries=3)
+    assert (
+        tasks._retry_notification_task(
+            exhausted,
+            "candidate_status",
+            "app-id",
+            tasks.tg.TelegramError("Service Unavailable", 503),
+        )
+        == "failed: retry limit exhausted"
+    )
+    assert exhausted.calls == []
+
+
 @pytest.mark.asyncio
 async def test_worker_task_disposes_async_connections(monkeypatch):
     disposed = False
@@ -85,7 +145,7 @@ async def test_hr_notification_falls_back_to_text_when_photo_fails(monkeypatch):
     sent: dict = {}
 
     async def failed_photo(*args, **kwargs):
-        raise tasks.tg.TelegramError("Telegram cannot fetch the photo")
+        raise tasks.tg.TelegramError("Telegram cannot fetch the photo", 400)
 
     async def send_message(token, chat_id, text, **kwargs):
         sent.update(token=token, chat_id=chat_id, text=text, kwargs=kwargs)
@@ -105,6 +165,23 @@ async def test_hr_notification_falls_back_to_text_when_photo_fails(monkeypatch):
 
     assert sent["text"] == "👤 Кандидат: Азиза Каримова"
     assert sent["kwargs"]["reply_markup"] == keyboard
+
+
+@pytest.mark.asyncio
+async def test_hr_notification_rethrows_temporary_photo_delivery_failure(monkeypatch):
+    async def failed_photo(*args, **kwargs):
+        raise tasks.tg.TelegramError("Telegram unavailable", 503)
+
+    monkeypatch.setattr(tasks.tg, "send_photo", failed_photo)
+
+    with pytest.raises(tasks.tg.TelegramError, match="unavailable"):
+        await tasks._send_hr_application_notification(
+            123,
+            "👤 Кандидат: Азиза Каримова",
+            None,
+            "https://example.com/portrait.jpg",
+            None,
+        )
 
 
 def test_only_company_wide_answers_are_rendered_for_group_notification():
