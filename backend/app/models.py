@@ -576,6 +576,9 @@ class ApplicationStatusHistory(Base):
     )
     from_status_label: Mapped[str | None] = mapped_column(Text)
     to_status_label: Mapped[str] = mapped_column(Text, nullable=False)
+    # Optional recruiter context is an immutable part of the transition, not a mutable
+    # comment. It keeps hand-offs and rejection decisions understandable in the timeline.
+    reason: Mapped[str | None] = mapped_column(Text)
     changed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

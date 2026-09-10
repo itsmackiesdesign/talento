@@ -606,6 +606,7 @@ class StatusHistoryOut(BaseModel):
     # itself is later renamed or deleted.
     from_status_label: str | None
     to_status_label: str
+    reason: str | None
     changed_by_name: str | None
     created_at: datetime
 
@@ -640,6 +641,7 @@ class ApplicationPage(BaseModel):
 
 class StatusUpdate(BaseModel):
     status_id: uuid.UUID
+    reason: Annotated[str, Field(max_length=1000)] | None = None
 
 
 class BulkStatusUpdate(BaseModel):

@@ -286,8 +286,11 @@ export const api = {
       page_size?: number;
     }) => get<ApplicationPage>(`/applications${qs(params)}`),
     get: (id: string) => get<ApplicationDetail>(`/applications/${id}`),
-    setStatus: (id: string, statusId: string) =>
-      patch<ApplicationDetail>(`/applications/${id}/status`, { status_id: statusId }),
+    setStatus: (id: string, statusId: string, reason?: string) =>
+      patch<ApplicationDetail>(`/applications/${id}/status`, {
+        status_id: statusId,
+        reason: reason || undefined,
+      }),
     bulkSetStatus: (applicationIds: string[], statusId: string) =>
       patch<BulkStatusUpdateResult>("/applications/bulk/status", {
         application_ids: applicationIds,

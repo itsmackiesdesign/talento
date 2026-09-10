@@ -336,6 +336,7 @@ export default function ApplicationsPage() {
     [answerFiltersParam],
   );
   const [comment, setComment] = useState("");
+  const [transitionReason, setTransitionReason] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDueAt, setTaskDueAt] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -361,6 +362,8 @@ export default function ApplicationsPage() {
   );
 
   useEffect(() => setSearch(querySearch), [querySearch]);
+
+  useEffect(() => setTransitionReason(""), [routeId]);
 
   useEffect(() => {
     const nextSearch = search.trim();
@@ -460,8 +463,8 @@ export default function ApplicationsPage() {
     ]);
 
   const setStatus = useMutation({
-    mutationFn: ({ id, statusId }: { id: string; statusId: string }) =>
-      api.applications.setStatus(id, statusId),
+    mutationFn: ({ id, statusId, reason }: { id: string; statusId: string; reason?: string }) =>
+      api.applications.setStatus(id, statusId, reason),
     onMutate: async ({ id, statusId }) => {
       await qc.cancelQueries({ queryKey: applicationsQueryKey });
       const previous = qc.getQueryData<ApplicationPage>(applicationsQueryKey);
@@ -480,6 +483,7 @@ export default function ApplicationsPage() {
       toast.error(e.message);
     },
     onSuccess: async () => {
+      setTransitionReason("");
       await invalidate();
       toast.success(t("toast.statusChanged"));
     },
@@ -1008,7 +1012,11 @@ export default function ApplicationsPage() {
                 <Select
                   value={detail.data.status_id}
                   onValueChange={(v) =>
-                    setStatus.mutate({ id: detail.data!.id, statusId: v })
+                    setStatus.mutate({
+                      id: detail.data!.id,
+                      statusId: v,
+                      reason: transitionReason.trim() || undefined,
+                    })
                   }
                 >
                   <SelectTrigger className="w-44" aria-label={t("applications.status")}>
@@ -1051,6 +1059,19 @@ export default function ApplicationsPage() {
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
               </div>
+
+              <TextField
+                fullWidth
+                size="small"
+                multiline
+                minRows={2}
+                value={transitionReason}
+                label={t("applications.transitionReason")}
+                placeholder={t("applications.transitionReasonPlaceholder")}
+                helperText={t("applications.transitionReasonHint")}
+                inputProps={{ maxLength: 1000 }}
+                onChange={(event) => setTransitionReason(event.target.value)}
+              />
 
               {detail.data.candidate_phone && (
                 <p className="text-sm">
@@ -1206,6 +1227,11 @@ export default function ApplicationsPage() {
                       {h.from_status_label ? `${h.from_status_label} → ` : ""}
                       {h.to_status_label}
                       {h.changed_by_name && ` · ${h.changed_by_name}`}
+                      {h.reason && (
+                        <Typography component="p" variant="caption" color="text.primary" sx={{ mt: 0.5 }}>
+                          {h.reason}
+                        </Typography>
+                      )}
                     </li>
                   ))}
                 </ol>

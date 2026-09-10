@@ -387,7 +387,7 @@ async def test_status_change_writes_history(client):
     with _no_celery():
         resp = await client.patch(
             f"/api/v1/applications/{seed['application_id']}/status",
-            json={"status_id": interview_id},
+            json={"status_id": interview_id, "reason": "Подтвердил удобное время интервью"},
             headers=owner["headers"],
         )
     assert resp.status_code == 200
@@ -396,6 +396,7 @@ async def test_status_change_writes_history(client):
 
     transitions = [(h["from_status_label"], h["to_status_label"]) for h in body["history"]]
     assert ("Новая", "Интервью") in transitions
+    assert body["history"][-1]["reason"] == "Подтвердил удобное время интервью"
     assert body["history"][-1]["changed_by_name"] == "Test User"
 
 
@@ -481,6 +482,20 @@ async def test_invalid_status_is_rejected(client):
         headers=owner["headers"],
     )
     assert resp.status_code == 422
+
+
+async def test_status_transition_reason_is_bounded(client):
+    owner = await make_company(client)
+    seed = await _seed_application(owner["company_id"])
+    interview_id = await _status_id(owner["company_id"], "interview")
+
+    response = await client.patch(
+        f"/api/v1/applications/{seed['application_id']}/status",
+        json={"status_id": interview_id, "reason": "x" * 1001},
+        headers=owner["headers"],
+    )
+
+    assert response.status_code == 422
 
 
 async def test_status_from_another_company_is_rejected(client):

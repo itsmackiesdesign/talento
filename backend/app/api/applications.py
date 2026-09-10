@@ -402,10 +402,17 @@ async def export_applications(
     )
 
 
-async def _load_owned(db: AsyncSession, application_id: uuid.UUID, company_id: uuid.UUID):
-    row = (
-        await db.execute(_base_query(company_id).where(Application.id == application_id))
-    ).first()
+async def _load_owned(
+    db: AsyncSession,
+    application_id: uuid.UUID,
+    company_id: uuid.UUID,
+    *,
+    lock_application: bool = False,
+):
+    stmt = _base_query(company_id).where(Application.id == application_id)
+    if lock_application:
+        stmt = stmt.with_for_update(of=Application)
+    row = (await db.execute(stmt)).first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Application not found")
     return row
@@ -541,6 +548,7 @@ async def get_application(
             StatusHistoryOut(
                 from_status_label=h.from_status_label,
                 to_status_label=h.to_status_label,
+                reason=h.reason,
                 changed_by_name=h.user.full_name if h.user else None,
                 created_at=h.created_at,
             )
@@ -558,8 +566,9 @@ async def update_status(
     db: DB,
 ) -> ApplicationDetail:
     app, _vacancy, _branch, current_status = await _load_owned(
-        db, application_id, company.id
+        db, application_id, company.id, lock_application=True
     )
+    transition_reason = payload.reason.strip() if payload.reason else None
 
     if app.status_id != payload.status_id:
         target = await get_owned_or_404(db, ApplicationStatus, payload.status_id, company.id)
@@ -571,6 +580,7 @@ async def update_status(
                 to_status_id=target.id,
                 from_status_label=current_status.label,
                 to_status_label=target.label,
+                reason=transition_reason or None,
                 changed_by=user.id,
             )
         )

@@ -249,6 +249,7 @@ export interface StatusHistoryEntry {
   // status itself is later renamed or deleted. See ApplicationStatusHistory in models.py.
   from_status_label: string | null;
   to_status_label: string;
+  reason: string | null;
   changed_by_name: string | null;
   created_at: string;
 }
