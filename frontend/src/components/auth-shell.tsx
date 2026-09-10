@@ -192,15 +192,15 @@ export function AuthShell({
           aria-hidden
           sx={{
             position: "absolute",
-            inset: { lg: "72px 0 170px", xl: "78px 0 180px" },
+            inset: { lg: "46px 0 156px", xl: "52px 0 166px" },
             zIndex: 0,
-            background: "radial-gradient(ellipse 72% 66% at 50% 44%, rgba(5, 5, 7, 0.66) 0%, rgba(5, 5, 7, 0.38) 44%, rgba(5, 5, 7, 0) 78%)",
+            background: "radial-gradient(ellipse 84% 74% at 50% 42%, rgba(5, 5, 7, 0.5) 0%, rgba(5, 5, 7, 0.22) 48%, rgba(5, 5, 7, 0) 82%)",
           }}
         >
           <Box
             sx={{
               position: "absolute",
-              inset: "10% 12%",
+              inset: "5% 4%",
               display: "grid",
               placeItems: "center",
               opacity: renderPath === "live" && sceneReady ? 0 : 0.17,

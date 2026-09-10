@@ -7,6 +7,16 @@ import * as THREE from "three";
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const smoother = (value) => value * value * value * (value * (value * 6 - 15) + 10);
 
+// This is the open-access pose from the cinematic landing, adapted only for
+// the narrower login canvas. It keeps the actor's depth and silhouette rather
+// than presenting it as a small, front-on product icon.
+const LANDING_LOGIN_POSE = {
+  position: [0.08, 0.14, 0.24],
+  rotation: [0.26, 0.2, -0.08],
+  scale: 0.78,
+  camera: [0, 0, 9.12],
+};
+
 // The public landing and auth page deliberately share this exact Talento actor geometry.
 function createLogoGeometries() {
   const outer = 2.7;
@@ -99,16 +109,16 @@ function TalentoAuthActor({ visualState, signals }) {
     const separation = typing * 0.1 + recentInput * 0.06 + errorEnvelope * 0.18;
 
     if (actor.current) {
-      const rotationX = 0.08 + Math.sin(time * 0.23) * 0.065 - pointerY * 0.1 + errorEnvelope * Math.sin(stateAge * 27) * 0.018 + success * 0.22;
-      const rotationY = -0.18 + Math.cos(time * 0.19) * 0.085 + pointerX * 0.15 + errorEnvelope * Math.sin(stateAge * 23) * 0.03 + success * 0.46;
-      const rotationZ = -0.05 + Math.sin(time * 0.16) * 0.028 - pointerX * 0.026 - success * 0.1;
+      const rotationX = LANDING_LOGIN_POSE.rotation[0] + Math.sin(time * 0.23) * 0.065 - pointerY * 0.1 + errorEnvelope * Math.sin(stateAge * 27) * 0.018 + success * 0.22;
+      const rotationY = LANDING_LOGIN_POSE.rotation[1] + Math.cos(time * 0.19) * 0.085 + pointerX * 0.15 + errorEnvelope * Math.sin(stateAge * 23) * 0.03 + success * 0.46;
+      const rotationZ = LANDING_LOGIN_POSE.rotation[2] + Math.sin(time * 0.16) * 0.028 - pointerX * 0.026 - success * 0.1;
       actor.current.rotation.x = THREE.MathUtils.damp(actor.current.rotation.x, rotationX, 4.9, delta);
       actor.current.rotation.y = THREE.MathUtils.damp(actor.current.rotation.y, rotationY, 4.9, delta);
       actor.current.rotation.z = THREE.MathUtils.damp(actor.current.rotation.z, rotationZ, 5.7, delta);
-      actor.current.position.x = THREE.MathUtils.damp(actor.current.position.x, pointerX * 0.17 - success * 0.86, 4.4, delta);
-      actor.current.position.y = THREE.MathUtils.damp(actor.current.position.y, 0.08 + pointerY * 0.09 + Math.sin(time * 0.38) * 0.012 + success * 1.05, 4.4, delta);
-      actor.current.position.z = THREE.MathUtils.damp(actor.current.position.z, -0.2 - success * 0.9, 4.4, delta);
-      actor.current.scale.setScalar(THREE.MathUtils.damp(actor.current.scale.x, 0.62 + recentInput * 0.014 + success * 0.2, 5, delta));
+      actor.current.position.x = THREE.MathUtils.damp(actor.current.position.x, LANDING_LOGIN_POSE.position[0] + pointerX * 0.19 - success * 0.86, 4.4, delta);
+      actor.current.position.y = THREE.MathUtils.damp(actor.current.position.y, LANDING_LOGIN_POSE.position[1] + pointerY * 0.1 + Math.sin(time * 0.38) * 0.012 + success * 1.05, 4.4, delta);
+      actor.current.position.z = THREE.MathUtils.damp(actor.current.position.z, LANDING_LOGIN_POSE.position[2] - success * 0.9, 4.4, delta);
+      actor.current.scale.setScalar(THREE.MathUtils.damp(actor.current.scale.x, LANDING_LOGIN_POSE.scale + recentInput * 0.016 + success * 0.2, 5, delta));
     }
     if (rearLayer.current) rearLayer.current.position.z = THREE.MathUtils.damp(rearLayer.current.position.z, -0.34 - separation * 0.7, 5, delta);
     if (midLayer.current) midLayer.current.position.z = THREE.MathUtils.damp(midLayer.current.position.z, -0.17 - separation * 0.36, 5, delta);
@@ -122,11 +132,11 @@ function TalentoAuthActor({ visualState, signals }) {
       glow.current.intensity = 18 + Math.sin(time * 0.7) * 1.2 + recentInput * 2 + errorEnvelope * 5;
       glow.current.color.set(visualState === "error" ? "#ff3153" : "#2f2bff");
     }
-    camera.position.set(0, 0, 9.35);
+    camera.position.set(...LANDING_LOGIN_POSE.camera);
     camera.lookAt(0, 0, 0);
   });
 
-  return <group ref={actor} position={[0, 0.08, -0.2]} rotation={[0.08, -0.18, -0.05]} scale={0.62}>
+  return <group ref={actor} position={LANDING_LOGIN_POSE.position} rotation={LANDING_LOGIN_POSE.rotation} scale={LANDING_LOGIN_POSE.scale}>
     <group ref={rearLayer} scale={1.09} position-z={-0.34}><LogoLayer geometries={geometries} material={materials.rear} /></group>
     <group ref={midLayer} scale={1.045} position-z={-0.17}><LogoLayer geometries={geometries} material={materials.mid} /></group>
     <LogoLayer geometries={geometries} material={materials.front} />
