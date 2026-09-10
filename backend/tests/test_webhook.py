@@ -1,13 +1,14 @@
 """Bot connection and webhook authentication."""
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from sqlalchemy import select
 
 from app.api import webhook as webhook_api
 from app.core.crypto import decrypt, encrypt, mask_token
 from app.models import Bot as BotModel
+from app.models import TelegramUpdateInbox
 from tests.conftest import TestSession, make_company
 
 TOKEN = "123456789:AAHfake-token-for-tests"
@@ -161,31 +162,106 @@ async def test_webhook_rejects_unknown_bot(client):
     assert resp.status_code == 403
 
 
-async def test_webhook_accepts_valid_request(client):
+async def test_webhook_persists_before_acknowledging(client, monkeypatch):
     owner = await make_company(client)
     bot_id = await _make_bot_row(uuid.UUID(owner["company_id"]))
+    queue = Mock()
+    monkeypatch.setattr(webhook_api.process_telegram_update, "delay", queue)
 
     resp = await client.post(
         f"/webhook/{bot_id}/correct-secret",
-        json={"update_id": 1},
+        json={"update_id": 1, "message": {"text": "/start"}},
         headers={"X-Telegram-Bot-Api-Secret-Token": "correct-secret"},
     )
     assert resp.status_code == 200
-    assert resp.json()["ok"] is True
+    assert resp.json() == {"ok": True, "queued": True}
+    queue.assert_called_once()
+
+    async with TestSession() as db:
+        inbox = await db.scalar(select(TelegramUpdateInbox))
+    assert inbox is not None
+    assert inbox.bot_id == bot_id
+    assert inbox.source == "tenant"
+    assert inbox.status == "pending"
+    assert inbox.payload["update_id"] == 1
+
+
+async def test_webhook_deduplicates_telegram_retries(client, monkeypatch):
+    owner = await make_company(client)
+    bot_id = await _make_bot_row(uuid.UUID(owner["company_id"]))
+    queue = Mock()
+    monkeypatch.setattr(webhook_api.process_telegram_update, "delay", queue)
+    kwargs = {
+        "json": {"update_id": 42, "message": {"text": "/start"}},
+        "headers": {"X-Telegram-Bot-Api-Secret-Token": "correct-secret"},
+    }
+
+    first = await client.post(f"/webhook/{bot_id}/correct-secret", **kwargs)
+    second = await client.post(f"/webhook/{bot_id}/correct-secret", **kwargs)
+
+    assert first.json() == {"ok": True, "queued": True}
+    assert second.json() == {"ok": True, "queued": False}
+    queue.assert_called_once()
+    async with TestSession() as db:
+        rows = (await db.scalars(select(TelegramUpdateInbox))).all()
+    assert len(rows) == 1
+
+
+async def test_rate_limited_webhook_is_queued_not_discarded(client, monkeypatch):
+    owner = await make_company(client)
+    bot_id = await _make_bot_row(uuid.UUID(owner["company_id"]))
+    queue = Mock()
+    monkeypatch.setattr(webhook_api.process_telegram_update, "delay", queue)
+    monkeypatch.setattr(webhook_api, "RATE_LIMIT_PER_SECOND", 0)
+
+    resp = await client.post(
+        f"/webhook/{bot_id}/correct-secret",
+        json={"update_id": 43, "message": {"text": "/start"}},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "correct-secret"},
+    )
+
+    assert resp.json() == {"ok": True, "queued": True}
+    queue.assert_called_once()
+
+
+async def test_broker_failure_keeps_update_for_a_safe_telegram_retry(client, monkeypatch):
+    owner = await make_company(client)
+    bot_id = await _make_bot_row(uuid.UUID(owner["company_id"]))
+    monkeypatch.setattr(
+        webhook_api.process_telegram_update,
+        "delay",
+        Mock(side_effect=RuntimeError("broker unavailable")),
+    )
+
+    resp = await client.post(
+        f"/webhook/{bot_id}/correct-secret",
+        json={"update_id": 44, "message": {"text": "/start"}},
+        headers={"X-Telegram-Bot-Api-Secret-Token": "correct-secret"},
+    )
+
+    assert resp.status_code == 503
+    async with TestSession() as db:
+        inbox = await db.scalar(select(TelegramUpdateInbox))
+    assert inbox is not None
+    assert inbox.status == "failed"
 
 
 async def test_platform_webhook_is_not_captured_by_tenant_uuid_route(client, monkeypatch):
-    handler = AsyncMock()
+    queue = Mock()
     monkeypatch.setattr(webhook_api.settings, "PLATFORM_BOT_TOKEN", TOKEN)
-    monkeypatch.setattr(webhook_api, "_process_platform_update", handler)
+    monkeypatch.setattr(webhook_api.process_telegram_update, "delay", queue)
     secret = webhook_api.platform_webhook_secret()
     payload = {"update_id": 1, "message": {"text": "/start"}}
 
     resp = await client.post(f"/webhook/platform/{secret}", json=payload)
 
     assert resp.status_code == 200, resp.text
-    assert resp.json() == {"ok": True}
-    handler.assert_awaited_once_with(payload)
+    assert resp.json() == {"ok": True, "queued": True}
+    queue.assert_called_once()
+    async with TestSession() as db:
+        inbox = await db.scalar(select(TelegramUpdateInbox))
+    assert inbox is not None
+    assert inbox.source == "platform"
 
 
 async def test_inactive_bot_skips_processing(client):

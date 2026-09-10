@@ -4,25 +4,27 @@ One route serves every connected bot. The path carries the bot id plus a per-bot
 and Telegram additionally echoes that secret in ``X-Telegram-Bot-Api-Secret-Token`` — both
 are checked, in constant time, before an update is looked at.
 
-Telegram retries any update it doesn't get a prompt 200 for, so the handler acknowledges
-first and does the real work in a background task (spec §7). The auth check runs against a
-small Redis-cached record so the hot path costs no database round-trip; the background task
-then loads the full tenant context with its own session, which keeps every ORM instance
-bound to the session that actually uses it.
+Telegram retries any update it doesn't get a prompt 200 for. We therefore persist it to the
+PostgreSQL inbox *before* acknowledgement and dispatch it through Celery afterwards. The auth
+check runs against a small Redis-cached record so the hot path costs no database round-trip.
 """
 
 import secrets
 import uuid
 from typing import Annotated
 
-from aiogram.types import Update
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 
-from app.bot.runtime import get_bot_auth, get_dispatcher, load_bot_context, telegram_bot
+from app.bot.runtime import get_bot_auth
 from app.core.config import settings
-from app.core.db import SessionLocal
 from app.core.logging import get_logger
 from app.core.redis_client import get_redis
+from app.services.telegram_inbox import (
+    InvalidTelegramUpdate,
+    mark_enqueue_failed,
+    store_update,
+)
+from app.workers.tasks import process_telegram_update
 
 router = APIRouter(tags=["webhook"])
 log = get_logger(__name__)
@@ -43,24 +45,6 @@ async def _rate_limited(redis, bot_id: uuid.UUID) -> bool:
         return False
 
 
-async def _process(bot_id: uuid.UUID, payload: dict) -> None:
-    """Run one update through the shared Dispatcher with a fresh session and Bot."""
-    redis = get_redis()
-    try:
-        async with SessionLocal() as db:
-            ctx = await load_bot_context(db, bot_id)
-            if ctx is None:
-                return
-            async with telegram_bot(ctx.token) as bot:
-                await get_dispatcher().feed_update(
-                    bot, Update.model_validate(payload), ctx=ctx, db=db, redis=redis
-                )
-    except Exception as exc:  # noqa: BLE001 — a failed update must not crash the worker
-        log.exception("update_processing_failed", error=str(exc), bot_id=str(bot_id))
-    finally:
-        await redis.aclose()
-
-
 def platform_webhook_secret() -> str:
     """Derived from the platform token so it needs no extra env var, but never *is* the token."""
     import hashlib
@@ -70,19 +54,24 @@ def platform_webhook_secret() -> str:
     ).hexdigest()[:32]
 
 
-async def _process_platform_update(payload: dict) -> None:
-    from app.api.notifications import handle_platform_update
-
+async def _enqueue(receipt) -> None:
+    if not receipt.should_enqueue:
+        return
     try:
-        await handle_platform_update(payload)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("platform_update_failed", error=str(exc))
+        process_telegram_update.delay(str(receipt.inbox_id))
+    except Exception as exc:  # noqa: BLE001 — returning non-200 asks Telegram to retry safely.
+        await mark_enqueue_failed(receipt.inbox_id, f"Celery publish failed: {type(exc).__name__}")
+        log.exception("telegram_inbox_enqueue_failed", inbox_id=str(receipt.inbox_id))
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Could not queue Telegram update; please retry",
+        ) from exc
 
 
 # Keep this static route before /webhook/{bot_id}/{secret}. Otherwise Starlette matches
 # "platform" as bot_id first and FastAPI rejects it as a non-UUID with HTTP 422.
 @router.post("/webhook/platform/{secret}", status_code=status.HTTP_200_OK)
-async def platform_webhook(secret: str, request: Request, background: BackgroundTasks) -> dict:
+async def platform_webhook(secret: str, request: Request) -> dict:
     """Service bot used for HR notifications and the ``/link {code}`` flow (spec §3.1)."""
     if not settings.PLATFORM_BOT_TOKEN:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Platform bot is not configured")
@@ -94,8 +83,12 @@ async def platform_webhook(secret: str, request: Request, background: Background
     except Exception:  # noqa: BLE001
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed update") from None
 
-    background.add_task(_process_platform_update, payload)
-    return {"ok": True}
+    try:
+        receipt = await store_update(source="platform", payload=payload)
+    except InvalidTelegramUpdate as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    await _enqueue(receipt)
+    return {"ok": True, "queued": receipt.should_enqueue}
 
 
 @router.post("/webhook/{bot_id}/{secret}", status_code=status.HTTP_200_OK)
@@ -103,7 +96,6 @@ async def telegram_webhook(
     bot_id: uuid.UUID,
     secret: str,
     request: Request,
-    background: BackgroundTasks,
     x_telegram_bot_api_secret_token: Annotated[
         str | None, Header(alias="X-Telegram-Bot-Api-Secret-Token")
     ] = None,
@@ -132,7 +124,6 @@ async def telegram_webhook(
 
         if await _rate_limited(redis, bot_id):
             log.warning("webhook_rate_limited", bot_id=str(bot_id))
-            return {"ok": True, "skipped": "rate_limited"}
     finally:
         await redis.aclose()
 
@@ -141,5 +132,9 @@ async def telegram_webhook(
     except Exception:  # noqa: BLE001
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Malformed update") from None
 
-    background.add_task(_process, bot_id, payload)
-    return {"ok": True}
+    try:
+        receipt = await store_update(source="tenant", bot_id=bot_id, payload=payload)
+    except InvalidTelegramUpdate as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from None
+    await _enqueue(receipt)
+    return {"ok": True, "queued": receipt.should_enqueue}

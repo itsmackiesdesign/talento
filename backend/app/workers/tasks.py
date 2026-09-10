@@ -8,6 +8,7 @@ import asyncio
 import re
 import uuid
 from collections.abc import Coroutine
+from datetime import UTC, datetime
 from html import escape, unescape
 from typing import Any
 from urllib.parse import urlparse
@@ -28,6 +29,7 @@ from app.models import (
     Branch,
     Company,
     Question,
+    TelegramUpdateInbox,
     Vacancy,
 )
 from app.services import telegram as tg
@@ -53,6 +55,98 @@ async def _run_with_fresh_db(coro: Coroutine[Any, Any, str]) -> str:
         return await coro
     finally:
         await engine.dispose()
+
+
+async def _mark_inbox_failed(inbox_id: uuid.UUID, error: Exception) -> None:
+    async with SessionLocal() as db:
+        inbox = await db.get(TelegramUpdateInbox, inbox_id, with_for_update=True)
+        if inbox is None or inbox.status == "processed":
+            return
+        inbox.status = "failed"
+        inbox.last_error = f"{type(error).__name__}: {error}"[:2000]
+        await db.commit()
+
+
+async def _mark_inbox_processed(inbox_id: uuid.UUID) -> None:
+    async with SessionLocal() as db:
+        inbox = await db.get(TelegramUpdateInbox, inbox_id, with_for_update=True)
+        if inbox is None:
+            return
+        inbox.status = "processed"
+        inbox.processed_at = datetime.now(UTC)
+        inbox.last_error = None
+        # Update payloads can contain candidate PII. The idempotency record only needs
+        # delivery metadata once the aiogram dispatcher has accepted the update.
+        inbox.payload = {}
+        await db.commit()
+
+
+async def _dispatch_inbox_update(inbox_id: uuid.UUID) -> str:
+    """Run one stored update at least once; duplicate Celery jobs safely converge here."""
+
+    async with SessionLocal() as db:
+        inbox = await db.get(TelegramUpdateInbox, inbox_id, with_for_update=True)
+        if inbox is None:
+            return "inbox update not found"
+        if inbox.status == "processed":
+            return "already processed"
+        inbox.status = "processing"
+        inbox.attempts += 1
+        inbox.last_error = None
+        source = inbox.source
+        bot_id = inbox.bot_id
+        payload = dict(inbox.payload or {})
+        await db.commit()
+
+    try:
+        if source == "platform":
+            from app.api.notifications import handle_platform_update
+
+            await handle_platform_update(payload)
+        else:
+            if bot_id is None:  # pragma: no cover - protected by the webhook/store contract.
+                raise RuntimeError("Tenant inbox update has no bot id")
+            from aiogram.types import Update
+
+            from app.bot.runtime import get_dispatcher, load_bot_context, telegram_bot
+            from app.core.redis_client import get_redis
+
+            redis = get_redis()
+            try:
+                async with SessionLocal() as db:
+                    ctx = await load_bot_context(db, bot_id)
+                    if ctx is not None:
+                        async with telegram_bot(ctx.token) as bot:
+                            await get_dispatcher().feed_update(
+                                bot, Update.model_validate(payload), ctx=ctx, db=db, redis=redis
+                            )
+            finally:
+                await redis.aclose()
+    except Exception as exc:
+        await _mark_inbox_failed(inbox_id, exc)
+        raise
+
+    await _mark_inbox_processed(inbox_id)
+    return "processed"
+
+
+@celery_app.task(bind=True, name="talento.process_telegram_update", max_retries=7)
+def process_telegram_update(self, inbox_id: str) -> str:
+    """Process durable inbox work with bounded exponential retries and a DB-visible DLQ."""
+
+    try:
+        return asyncio.run(_run_with_fresh_db(_dispatch_inbox_update(uuid.UUID(inbox_id))))
+    except Exception as exc:  # noqa: BLE001 — row state preserves the failed update for recovery.
+        retry_number = self.request.retries
+        countdown = min(300, 5 * (2**retry_number))
+        log.warning(
+            "telegram_inbox_retry_scheduled",
+            inbox_id=inbox_id,
+            retry=retry_number + 1,
+            countdown=countdown,
+            error=type(exc).__name__,
+        )
+        raise self.retry(exc=exc, countdown=countdown) from exc
 
 
 @celery_app.task(name="talento.notify_new_application", max_retries=3, default_retry_delay=30)

@@ -174,6 +174,50 @@ class Bot(Base):
     company: Mapped[Company] = relationship(back_populates="bot")
 
 
+class TelegramUpdateInbox(Base):
+    """Durable, idempotent hand-off between Telegram and the async worker.
+
+    Telegram retries a webhook until it receives ``200``. A unique dedupe key lets us
+    acknowledge only after PostgreSQL has the update, while the worker can safely receive
+    duplicate jobs without running the candidate flow twice.
+    """
+
+    __tablename__ = "telegram_update_inbox"
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('tenant','platform')", name="ck_telegram_inbox_source"
+        ),
+        CheckConstraint(
+            "status IN ('pending','processing','processed','failed')",
+            name="ck_telegram_inbox_status",
+        ),
+        Index("ix_telegram_inbox_status_available", "status", "available_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    # ``NULL`` is valid for the platform service bot. ``dedupe_key`` deliberately carries
+    # the source too, because PostgreSQL unique constraints consider multiple NULLs distinct.
+    bot_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("bots.id", ondelete="CASCADE")
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    dedupe_key: Mapped[str] = mapped_column(String(160), unique=True, nullable=False)
+    update_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    # The complete payload is needed only until processing succeeds; the worker clears it
+    # afterwards, retaining just safe delivery metadata for observability and dedupe.
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    available_at: Mapped[datetime] = mapped_column(
+        TS, server_default=func.now(), nullable=False
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(TS)
+    created_at: Mapped[datetime] = mapped_column(
+        TS, server_default=func.now(), nullable=False
+    )
+
+
 class Branch(Base):
     __tablename__ = "branches"
     __table_args__ = (Index("ix_branches_company", "company_id", "sort_order"),)
