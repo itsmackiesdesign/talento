@@ -41,15 +41,19 @@ async def _seed_application(
     status="new",
     answers=None,
     candidate_name="Аскар",
+    telegram_user_id: int | None = None,
+    candidate_username="askar",
+    candidate_phone="+998901234567",
 ):
     status_id = await _status_id(company_id, status)
     async with TestSession() as db:
         vacancy = Vacancy(company_id=uuid.UUID(company_id), title=title, status="active")
         candidate = Candidate(
-            telegram_user_id=uuid.uuid4().int % 10**9,
-            telegram_username="askar",
+            company_id=uuid.UUID(company_id),
+            telegram_user_id=telegram_user_id or uuid.uuid4().int % 10**9,
+            telegram_username=candidate_username,
             first_name=candidate_name,
-            phone="+998901234567",
+            phone=candidate_phone,
         )
         db.add_all([vacancy, candidate])
         await db.flush()
@@ -68,10 +72,19 @@ async def _seed_application(
                     "skipped": False,
                 }
             ],
+            candidate_name=candidate_name,
+            candidate_telegram_user_id=candidate.telegram_user_id,
+            candidate_username=candidate_username,
+            candidate_phone=candidate_phone,
+            candidate_language="ru",
         )
         db.add(application)
         await db.commit()
-        return {"application_id": str(application.id), "vacancy_id": str(vacancy.id)}
+        return {
+            "application_id": str(application.id),
+            "vacancy_id": str(vacancy.id),
+            "candidate_id": str(candidate.id),
+        }
 
 
 # Celery is not running in tests; the enqueue call is a no-op we assert on separately.
@@ -94,6 +107,65 @@ async def test_list_and_filter(client):
     )
     assert filtered.json()["total"] == 1
     assert filtered.json()["items"][0]["vacancy_title"] == "Кассир"
+
+
+async def test_candidate_identity_is_tenant_scoped_and_application_contact_is_immutable(client):
+    first = await make_company(client, "First")
+    second = await make_company(client, "Second")
+    shared_telegram_id = 777_000_111
+
+    first_app = await _seed_application(
+        first["company_id"],
+        candidate_name="Алия Первая",
+        telegram_user_id=shared_telegram_id,
+        candidate_username="first_alias",
+        candidate_phone="+998900000001",
+    )
+    await _seed_application(
+        second["company_id"],
+        candidate_name="Алия Вторая",
+        telegram_user_id=shared_telegram_id,
+        candidate_username="second_alias",
+        candidate_phone="+998900000002",
+    )
+
+    async with TestSession() as db:
+        candidates = (
+            await db.scalars(
+                select(Candidate)
+                .where(Candidate.telegram_user_id == shared_telegram_id)
+                .order_by(Candidate.company_id)
+            )
+        ).all()
+        assert len(candidates) == 2
+        first_candidate = await db.get(Candidate, uuid.UUID(first_app["candidate_id"]))
+        first_candidate.first_name = "Позднее имя"
+        first_candidate.telegram_username = "later_alias"
+        first_candidate.phone = "+998909999999"
+        await db.commit()
+
+    first_listing = await client.get("/api/v1/applications", headers=first["headers"])
+    second_listing = await client.get("/api/v1/applications", headers=second["headers"])
+
+    assert first_listing.status_code == 200, first_listing.text
+    assert second_listing.status_code == 200, second_listing.text
+    assert first_listing.json()["total"] == 1
+    assert first_listing.json()["items"][0]["candidate_name"] == "Алия Первая"
+    assert first_listing.json()["items"][0]["candidate_username"] == "first_alias"
+    assert first_listing.json()["items"][0]["candidate_phone"] == "+998900000001"
+    assert second_listing.json()["total"] == 1
+    assert second_listing.json()["items"][0]["candidate_name"] == "Алия Вторая"
+    assert second_listing.json()["items"][0]["candidate_username"] == "second_alias"
+    assert second_listing.json()["items"][0]["candidate_phone"] == "+998900000002"
+
+    original_search = await client.get(
+        "/api/v1/applications", params={"search": "Первая"}, headers=first["headers"]
+    )
+    mutable_search = await client.get(
+        "/api/v1/applications", params={"search": "Позднее"}, headers=first["headers"]
+    )
+    assert original_search.json()["total"] == 1
+    assert mutable_search.json()["total"] == 0
 
 
 async def test_candidate_profile_name_and_photo_are_displayed_and_searchable(client):

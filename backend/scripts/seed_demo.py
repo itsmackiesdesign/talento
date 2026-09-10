@@ -229,14 +229,14 @@ async def seed(email: str, password: str) -> None:
             ).all()
         )
 
-        # A Telegram account maps to exactly one candidate platform-wide, so
-        # `telegram_user_id` is globally UNIQUE. Seeding a second demo tenant would collide
-        # on a fixed base — pick a random one per run instead.
+        # Keep demo identities distinct on every seed run while production identity remains
+        # tenant-scoped by (company_id, telegram_user_id).
         tg_base = random.randint(500_000_000, 900_000_000)
 
         created = 0
         for index, (first_name, username) in enumerate(NAMES):
             candidate = Candidate(
+                company_id=company.id,
                 telegram_user_id=tg_base + index,
                 telegram_username=username,
                 first_name=first_name,
@@ -280,6 +280,11 @@ async def seed(email: str, password: str) -> None:
                 candidate_id=candidate.id,
                 status=status,
                 answers=answers,
+                candidate_name=candidate.first_name,
+                candidate_telegram_user_id=candidate.telegram_user_id,
+                candidate_username=candidate.telegram_username,
+                candidate_phone=candidate.phone,
+                candidate_language=candidate.language,
                 created_at=created_at,
             )
             db.add(application)

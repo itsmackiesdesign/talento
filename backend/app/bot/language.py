@@ -43,6 +43,7 @@ async def resolve(
     redis: Redis,
     db: AsyncSession,
     bot_id: uuid.UUID,
+    company_id: uuid.UUID,
     tg_user_id: int,
     telegram_language_code: str | None,
     enabled: list[str],
@@ -61,7 +62,10 @@ async def resolve(
         return chosen
 
     stored = await db.scalar(
-        select(Candidate.language).where(Candidate.telegram_user_id == tg_user_id)
+        select(Candidate.language).where(
+            Candidate.company_id == company_id,
+            Candidate.telegram_user_id == tg_user_id,
+        )
     )
     return (
         _first_enabled(stored, telegram_language_code, enabled=enabled)
@@ -73,6 +77,7 @@ async def remember(
     redis: Redis,
     db: AsyncSession,
     bot_id: uuid.UUID,
+    company_id: uuid.UUID,
     tg_user_id: int,
     lang: str,
 ) -> None:
@@ -83,7 +88,10 @@ async def remember(
         log.warning("language_cache_write_failed", error=str(exc))
 
     candidate = await db.scalar(
-        select(Candidate).where(Candidate.telegram_user_id == tg_user_id)
+        select(Candidate).where(
+            Candidate.company_id == company_id,
+            Candidate.telegram_user_id == tg_user_id,
+        )
     )
     if candidate is not None and candidate.language != lang:
         candidate.language = lang

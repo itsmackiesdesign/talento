@@ -417,7 +417,10 @@ async def test_chosen_language_is_persisted_on_the_candidate(bot, session, multi
 
     async with TestSession() as db:
         candidate = await db.scalar(
-            select(Candidate).where(Candidate.telegram_user_id == CANDIDATE_ID)
+            select(Candidate).where(
+                Candidate.company_id == multi_tenant["company_id"],
+                Candidate.telegram_user_id == CANDIDATE_ID,
+            )
         )
     assert candidate.language == "uz"
 

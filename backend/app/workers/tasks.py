@@ -26,7 +26,6 @@ from app.models import (
     ApplicationStatus,
     Bot,
     Branch,
-    Candidate,
     Company,
     Question,
     Vacancy,
@@ -173,9 +172,8 @@ async def _notify_new_application(application_id: str) -> str:
     async with SessionLocal() as db:
         row = (
             await db.execute(
-                select(Application, Vacancy, Candidate, Company, Branch)
+                select(Application, Vacancy, Company, Branch)
                 .join(Vacancy, Vacancy.id == Application.vacancy_id)
-                .join(Candidate, Candidate.id == Application.candidate_id)
                 .join(Company, Company.id == Application.company_id)
                 .outerjoin(Branch, Branch.id == Vacancy.branch_id)
                 .where(Application.id == uuid.UUID(application_id))
@@ -183,7 +181,7 @@ async def _notify_new_application(application_id: str) -> str:
         ).first()
         if row is None:
             return "application not found"
-        application, vacancy, candidate, company, branch = row
+        application, vacancy, company, branch = row
         current_common_question_ids = set(
             await db.scalars(
                 select(Question.id).where(
@@ -199,7 +197,7 @@ async def _notify_new_application(application_id: str) -> str:
         log.info("hr_notify_no_group", company_id=str(company.id))
         return "no linked group"
 
-    profile = resolve_candidate_profile(application.answers, candidate.first_name)
+    profile = resolve_candidate_profile(application.answers, application.candidate_name)
     lines = ["🔔 <b>Новая заявка</b>", ""]
     lines.append(f"🏢 Филиал: {escape(branch.name if branch else '—')}")
     lines.append(f"💼 Вакансия: {escape(vacancy.title)}")
@@ -235,9 +233,8 @@ async def _notify_candidate_status(application_id: str, to_status_id: str) -> st
     async with SessionLocal() as db:
         row = (
             await db.execute(
-                select(Application, Vacancy, Candidate, Bot, ApplicationStatus)
+                select(Application, Vacancy, Bot, ApplicationStatus)
                 .join(Vacancy, Vacancy.id == Application.vacancy_id)
-                .join(Candidate, Candidate.id == Application.candidate_id)
                 .join(Bot, Bot.company_id == Application.company_id)
                 .join(ApplicationStatus, ApplicationStatus.id == uuid.UUID(to_status_id))
                 .where(Application.id == uuid.UUID(application_id))
@@ -245,7 +242,7 @@ async def _notify_candidate_status(application_id: str, to_status_id: str) -> st
         ).first()
         if row is None:
             return "application or bot not found"
-        _application, vacancy, candidate, bot, target_status = row
+        application, vacancy, bot, target_status = row
 
         # 'viewed'-style steps the HR flagged as not candidate-facing are the point of this
         # flag — see ApplicationStatus.notify_candidate.
@@ -255,7 +252,8 @@ async def _notify_candidate_status(application_id: str, to_status_id: str) -> st
             return "candidate notifications disabled"
         token = decrypt(bot.token_encrypted)
         # Write to the candidate in the language they applied in, not the bot's default.
-        lang = normalise(candidate.language) or bot.language
+        lang = normalise(application.candidate_language) or bot.language
+        telegram_user_id = application.candidate_telegram_user_id
         vacancy_title = localized(vacancy, "title", lang)
         status_text = localized(target_status, "label", lang)
 
@@ -266,7 +264,7 @@ async def _notify_candidate_status(application_id: str, to_status_id: str) -> st
         status=escape(status_text),
     )
     try:
-        await tg.send_message(token, candidate.telegram_user_id, text)
+        await tg.send_message(token, telegram_user_id, text)
     except tg.TelegramError as exc:
         log.warning(
             "candidate_notify_failed",

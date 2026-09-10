@@ -57,6 +57,7 @@ class LanguageMiddleware(BaseMiddleware):
                 redis=data["redis"],
                 db=data["db"],
                 bot_id=ctx.bot_id,
+                company_id=ctx.company_id,
                 tg_user_id=user.id,
                 telegram_language_code=user.language_code,
                 enabled=ctx.company.enabled_languages,

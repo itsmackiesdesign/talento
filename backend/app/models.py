@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -312,9 +313,19 @@ class News(Base):
 
 class Candidate(Base):
     __tablename__ = "candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "telegram_user_id", name="uq_candidate_company_telegram"
+        ),
+        UniqueConstraint("id", "company_id", name="uq_candidate_id_company"),
+        Index("ix_candidates_company_created", "company_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
-    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     telegram_username: Mapped[str | None] = mapped_column(Text)
     first_name: Mapped[str] = mapped_column(Text, default="", nullable=False)
     phone: Mapped[str | None] = mapped_column(Text)
@@ -411,6 +422,12 @@ class Application(Base):
     __table_args__ = (
         # One active application per candidate per vacancy.
         UniqueConstraint("vacancy_id", "candidate_id", name="uq_application_vacancy_candidate"),
+        ForeignKeyConstraint(
+            ["candidate_id", "company_id"],
+            ["candidates.id", "candidates.company_id"],
+            name="fk_application_candidate_company",
+            ondelete="CASCADE",
+        ),
         Index("ix_applications_company_created", "company_id", "created_at"),
     )
 
@@ -421,9 +438,7 @@ class Application(Base):
     vacancy_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=False
     )
-    candidate_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False
-    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     # No ondelete: a status with applications still in it must be rejected by the API
     # before it can be deleted (reassign first) — this FK is the last-resort backstop.
     status_id: Mapped[uuid.UUID] = mapped_column(
@@ -432,6 +447,14 @@ class Application(Base):
     # Snapshot: [{question_id, question_text, type, answer}] — kept verbatim so later edits
     # to the question set never rewrite history.
     answers: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    # Immutable contact snapshot. The scoped Candidate row may be refreshed when the same
+    # Telegram user applies again, but an existing application must keep the identity and
+    # contact data the recruiter actually received at submission time.
+    candidate_name: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    candidate_username: Mapped[str | None] = mapped_column(Text)
+    candidate_phone: Mapped[str | None] = mapped_column(Text)
+    candidate_language: Mapped[str | None] = mapped_column(String(5))
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     vacancy: Mapped[Vacancy] = relationship()

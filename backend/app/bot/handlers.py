@@ -21,6 +21,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 from redis.asyncio import Redis
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import fsm, keyboards, menu
@@ -57,6 +58,7 @@ from app.services.billing import (
     charge_application,
     lock_billable_company,
 )
+from app.services.candidate_profiles import resolve_candidate_profile
 from app.services.storage import save_candidate_file, sniff_image
 
 router = Router(name="candidate")
@@ -288,11 +290,10 @@ async def _show_my_applications(
         await db.execute(
             select(Application, Vacancy, ApplicationStatus)
             .join(Vacancy, Vacancy.id == Application.vacancy_id)
-            .join(Candidate, Candidate.id == Application.candidate_id)
             .join(ApplicationStatus, ApplicationStatus.id == Application.status_id)
             .where(
                 Application.company_id == ctx.company_id,
-                Candidate.telegram_user_id == tg_user_id,
+                Application.candidate_telegram_user_id == tg_user_id,
             )
             .order_by(Application.created_at.desc())
             .limit(20)
@@ -644,11 +645,11 @@ async def _start_application(
     existing_row = (
         await db.execute(
             select(Application, ApplicationStatus)
-            .join(Candidate, Candidate.id == Application.candidate_id)
             .join(ApplicationStatus, ApplicationStatus.id == Application.status_id)
             .where(
+                Application.company_id == ctx.company_id,
                 Application.vacancy_id == vacancy_id,
-                Candidate.telegram_user_id == tg_user_id,
+                Application.candidate_telegram_user_id == tg_user_id,
             )
         )
     ).first()
@@ -714,17 +715,33 @@ async def _create_application(
         return
 
     candidate = await db.scalar(
-        select(Candidate).where(Candidate.telegram_user_id == tg_user.id)
+        select(Candidate).where(
+            Candidate.company_id == ctx.company_id,
+            Candidate.telegram_user_id == tg_user.id,
+        )
     )
     if candidate is None:
         candidate = Candidate(
+            company_id=ctx.company_id,
             telegram_user_id=tg_user.id,
             telegram_username=tg_user.username,
             first_name=tg_user.first_name or "",
             language=lang,
         )
-        db.add(candidate)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                db.add(candidate)
+                await db.flush()
+        except IntegrityError:
+            # Another update for this user created the tenant-scoped row first.
+            candidate = await db.scalar(
+                select(Candidate).where(
+                    Candidate.company_id == ctx.company_id,
+                    Candidate.telegram_user_id == tg_user.id,
+                )
+            )
+            if candidate is None:  # pragma: no cover - defensive database invariant
+                raise
     else:
         candidate.telegram_username = tg_user.username
         candidate.first_name = tg_user.first_name or candidate.first_name
@@ -738,12 +755,18 @@ async def _create_application(
             break
 
     new_status = await get_system_status(db, ctx.company_id, "new")
+    candidate_name = resolve_candidate_profile(payload, candidate.first_name).name
     application = Application(
         company_id=ctx.company_id,
         vacancy_id=vacancy.id,
         candidate_id=candidate.id,
         status_id=new_status.id,
         answers=payload,
+        candidate_name=candidate_name,
+        candidate_telegram_user_id=tg_user.id,
+        candidate_username=tg_user.username,
+        candidate_phone=candidate.phone,
+        candidate_language=lang,
     )
     db.add(application)
     try:
@@ -882,7 +905,9 @@ async def _dispatch_action(
         # client and is not trustworthy.
         if chosen not in (ctx.company.enabled_languages or []):
             return
-        await language.remember(redis, db, ctx.bot_id, tg_user_id, chosen)
+        await language.remember(
+            redis, db, ctx.bot_id, ctx.company_id, tg_user_id, chosen
+        )
         await _send_menu(
             message, redis, ctx, tg_user_id,
             t(chosen, "language_set"),
@@ -1126,7 +1151,10 @@ async def _has_chosen_language(
     except Exception:  # noqa: BLE001 — Redis trouble just means we ask again
         pass
     stored = await db.scalar(
-        select(Candidate.language).where(Candidate.telegram_user_id == tg_user_id)
+        select(Candidate.language).where(
+            Candidate.company_id == ctx.company_id,
+            Candidate.telegram_user_id == tg_user_id,
+        )
     )
     return bool(stored)
 

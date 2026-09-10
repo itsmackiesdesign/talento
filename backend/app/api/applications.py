@@ -21,7 +21,6 @@ from app.models import (
     ApplicationStatus,
     ApplicationStatusHistory,
     Branch,
-    Candidate,
     Question,
     Vacancy,
 )
@@ -47,9 +46,8 @@ DB = Annotated[AsyncSession, Depends(get_db)]
 
 def _base_query(company_id: uuid.UUID) -> Select:
     return (
-        select(Application, Vacancy, Candidate, Branch, ApplicationStatus)
+        select(Application, Vacancy, Branch, ApplicationStatus)
         .join(Vacancy, Vacancy.id == Application.vacancy_id)
-        .join(Candidate, Candidate.id == Application.candidate_id)
         .join(ApplicationStatus, ApplicationStatus.id == Application.status_id)
         .outerjoin(Branch, Branch.id == Vacancy.branch_id)
         .where(Application.company_id == company_id)
@@ -148,9 +146,9 @@ def _apply_filters(
         pattern = f"%{search.strip()}%"
         stmt = stmt.where(
             or_(
-                Candidate.first_name.ilike(pattern),
-                Candidate.telegram_username.ilike(pattern),
-                Candidate.phone.ilike(pattern),
+                Application.candidate_name.ilike(pattern),
+                Application.candidate_username.ilike(pattern),
+                Application.candidate_phone.ilike(pattern),
                 text(
                     """
                     EXISTS (
@@ -185,7 +183,6 @@ def _apply_filters(
 def _to_item(
     app: Application,
     vacancy: Vacancy,
-    cand: Candidate,
     branch: Branch | None,
     app_status: ApplicationStatus,
     current_profile_fields: dict[str, str] | None = None,
@@ -194,7 +191,7 @@ def _to_item(
 ):
     profile = resolve_candidate_profile(
         app.answers,
-        cand.first_name,
+        app.candidate_name,
         current_profile_fields=current_profile_fields,
         enabled_profile_fields=enabled_profile_fields,
         legacy_file_urls=legacy_file_urls,
@@ -210,8 +207,8 @@ def _to_item(
         branch_name=branch.name if branch else None,
         candidate_name=profile.name,
         candidate_photo_url=profile.photo_url,
-        candidate_username=cand.telegram_username,
-        candidate_phone=cand.phone,
+        candidate_username=app.candidate_username,
+        candidate_phone=app.candidate_phone,
     )
 
 
@@ -301,13 +298,12 @@ async def list_applications(
     )
 
     items = []
-    for app, vacancy, cand, branch, app_status in rows:
+    for app, vacancy, branch, app_status in rows:
         profile_fields, enabled_fields = _profile_config_for_vacancy(profile_questions, vacancy.id)
         items.append(
             _to_item(
                 app,
                 vacancy,
-                cand,
                 branch,
                 app_status,
                 profile_fields,
@@ -373,7 +369,7 @@ async def export_applications(
         ["Дата", "Филиал", "Вакансия", "Имя", "Телефон", "Username", "Статус", *question_columns]
     )
 
-    for app, vacancy, cand, branch, app_status in rows:
+    for app, vacancy, branch, app_status in rows:
         by_label = {}
         for answer in app.answers or []:
             value = answer.get("answer")
@@ -385,9 +381,9 @@ async def export_applications(
                 app.created_at.strftime("%Y-%m-%d %H:%M"),
                 branch.name if branch else "",
                 vacancy.title,
-                cand.first_name or "",
-                cand.phone or "",
-                f"@{cand.telegram_username}" if cand.telegram_username else "",
+                app.candidate_name,
+                app.candidate_phone or "",
+                f"@{app.candidate_username}" if app.candidate_username else "",
                 app_status.label,
                 *[by_label.get(col, "") for col in question_columns],
             ]
@@ -492,7 +488,7 @@ async def get_application(
     row = (await db.execute(stmt)).first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Application not found")
-    app, vacancy, cand, branch, app_status = row
+    app, vacancy, branch, app_status = row
 
     profile_questions = await _load_profile_questions(db, company.id)
     profile_fields, enabled_fields = _profile_config_for_vacancy(profile_questions, vacancy.id)
@@ -500,7 +496,6 @@ async def get_application(
     item = _to_item(
         app,
         vacancy,
-        cand,
         branch,
         app_status,
         profile_fields,
@@ -539,7 +534,7 @@ async def update_status(
     user: CurrentUser,
     db: DB,
 ) -> ApplicationDetail:
-    app, _vacancy, _cand, _branch, current_status = await _load_owned(
+    app, _vacancy, _branch, current_status = await _load_owned(
         db, application_id, company.id
     )
 

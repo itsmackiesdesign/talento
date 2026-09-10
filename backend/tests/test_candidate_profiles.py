@@ -62,6 +62,9 @@ def test_application_item_uses_profile_answers_with_telegram_fallbacks():
     application = SimpleNamespace(
         id=uuid.uuid4(),
         created_at=datetime.now(UTC),
+        candidate_name="Telegram name",
+        candidate_username="aziza",
+        candidate_phone="+998901234567",
         answers=[
             {
                 "profile_field": "candidate_name",
@@ -77,20 +80,15 @@ def test_application_item_uses_profile_answers_with_telegram_fallbacks():
         ],
     )
     vacancy = SimpleNamespace(id=uuid.uuid4(), title="Designer")
-    candidate = SimpleNamespace(
-        first_name="Telegram name",
-        telegram_username="aziza",
-        phone="+998901234567",
-    )
     application_status = SimpleNamespace(id=uuid.uuid4())
 
-    item = _to_item(application, vacancy, candidate, None, application_status)
+    item = _to_item(application, vacancy, None, application_status)
 
     assert item.candidate_name == "Aziza Karimova"
     assert item.candidate_photo_url == "https://test.example.com/files/portrait.jpg"
 
     application.answers = []
-    fallback = _to_item(application, vacancy, candidate, None, application_status)
+    fallback = _to_item(application, vacancy, None, application_status)
     assert fallback.candidate_name == "Telegram name"
     assert fallback.candidate_photo_url is None
 
@@ -101,6 +99,9 @@ def test_application_item_resolves_legacy_answers_from_current_question_roles():
     application = SimpleNamespace(
         id=uuid.uuid4(),
         created_at=datetime.now(UTC),
+        candidate_name="Telegram name",
+        candidate_username="legacy",
+        candidate_phone=None,
         answers=[
             {
                 "question_id": str(name_question_id),
@@ -117,17 +118,11 @@ def test_application_item_resolves_legacy_answers_from_current_question_roles():
         ],
     )
     vacancy = SimpleNamespace(id=uuid.uuid4(), title="Designer")
-    candidate = SimpleNamespace(
-        first_name="Telegram name",
-        telegram_username="legacy",
-        phone=None,
-    )
     application_status = SimpleNamespace(id=uuid.uuid4())
 
     item = _to_item(
         application,
         vacancy,
-        candidate,
         None,
         application_status,
         {
@@ -146,20 +141,17 @@ def test_configured_name_role_does_not_use_telegram_for_unanswerable_old_applica
     application = SimpleNamespace(
         id=uuid.uuid4(),
         created_at=datetime.now(UTC),
+        candidate_name="Telegram name",
+        candidate_username="legacy",
+        candidate_phone=None,
         answers=[],
     )
     vacancy = SimpleNamespace(id=uuid.uuid4(), title="Designer")
-    candidate = SimpleNamespace(
-        first_name="Telegram name",
-        telegram_username="legacy",
-        phone=None,
-    )
     application_status = SimpleNamespace(id=uuid.uuid4())
 
     item = _to_item(
         application,
         vacancy,
-        candidate,
         None,
         application_status,
         {},
