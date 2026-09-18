@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Briefcase, Inbox, TrendingUp } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -21,13 +22,23 @@ function StatCard({
   label,
   value,
   icon: Icon,
+  onClick,
 }: {
   label: string;
   value: number;
   icon: typeof Inbox;
+  onClick: () => void;
 }) {
   return (
-    <Card>
+    <Card
+      role="link"
+      tabIndex={0}
+      className="cursor-pointer transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") onClick();
+      }}
+    >
       <CardContent className="flex items-center gap-4 p-5">
         <div className="rounded-lg bg-primary/10 p-2.5 text-primary">
           <Icon className="h-5 w-5" />
@@ -42,7 +53,8 @@ function StatCard({
 }
 
 export default function DashboardPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const { data, isPending } = useQuery({
     queryKey: ["dashboard"],
     queryFn: () => api.dashboard.stats(30),
@@ -70,7 +82,10 @@ export default function DashboardPage() {
 
   const dailyChart = data.daily.map((point) => ({
     ...point,
-    label: new Date(point.date).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit" }),
+    label: new Date(`${point.date}T00:00:00`).toLocaleDateString(i18n.language, {
+      day: "2-digit",
+      month: "2-digit",
+    }),
   }));
   const hasDaily = data.daily.some((d) => d.count > 0);
   // Ordered by the fetched status list (same order the kanban columns use), not by
@@ -84,18 +99,47 @@ export default function DashboardPage() {
     }))
     .filter((d) => d.count > 0);
 
+  const openApplications = (params: Record<string, string> = {}) => {
+    const query = new URLSearchParams(params).toString();
+    navigate(`/applications${query ? `?${query}` : ""}`);
+  };
+  const daysAgo = (days: number) => {
+    const date = new Date();
+    date.setDate(date.getDate() - days);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+
   return (
     <>
       <PageHeader title={t("dashboard.title")} />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label={t("dashboard.total")} value={data.applications_total} icon={Inbox} />
-        <StatCard label={t("dashboard.last7")} value={data.applications_7d} icon={TrendingUp} />
-        <StatCard label={t("dashboard.last30")} value={data.applications_30d} icon={TrendingUp} />
+        <StatCard
+          label={t("dashboard.total")}
+          value={data.applications_total}
+          icon={Inbox}
+          onClick={() => openApplications()}
+        />
+        <StatCard
+          label={t("dashboard.last7")}
+          value={data.applications_7d}
+          icon={TrendingUp}
+          onClick={() => openApplications({ date_from: daysAgo(7) })}
+        />
+        <StatCard
+          label={t("dashboard.last30")}
+          value={data.applications_30d}
+          icon={TrendingUp}
+          onClick={() => openApplications({ date_from: daysAgo(30) })}
+        />
         <StatCard
           label={t("dashboard.activeVacancies")}
           value={data.active_vacancies}
           icon={Briefcase}
+          onClick={() => navigate("/vacancies")}
         />
       </div>
 
@@ -132,7 +176,17 @@ export default function DashboardPage() {
                       fontSize: 12,
                     }}
                   />
-                  <Bar dataKey="count" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  <Bar
+                    dataKey="count"
+                    name={t("dashboard.count")}
+                    fill="hsl(var(--primary))"
+                    radius={[4, 4, 0, 0]}
+                    className="cursor-pointer"
+                    onClick={(entry) => openApplications({
+                      date_from: entry.date,
+                      date_to: entry.date,
+                    })}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -170,7 +224,11 @@ export default function DashboardPage() {
                         fontSize: 12,
                       }}
                     />
-                    <Bar dataKey="count" radius={[0, 4, 4, 0]}>
+                    <Bar
+                      dataKey="count"
+                      name={t("dashboard.count")}
+                      radius={[0, 4, 4, 0]}
+                    >
                       {statusData.map((entry) => (
                         <Cell key={entry.id} fill={entry.color} />
                       ))}
@@ -192,9 +250,15 @@ export default function DashboardPage() {
             {data.by_vacancy.length ? (
               <ul className="space-y-2.5">
                 {data.by_vacancy.map((row) => (
-                  <li key={row.vacancy_id} className="flex items-center justify-between gap-4 text-sm">
-                    <span className="truncate">{row.title}</span>
-                    <span className="shrink-0 font-medium tabular-nums">{row.count}</span>
+                  <li key={row.vacancy_id}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1 text-left text-sm transition-colors hover:bg-accent"
+                      onClick={() => openApplications({ vacancy_id: row.vacancy_id })}
+                    >
+                      <span className="truncate">{row.title}</span>
+                      <span className="shrink-0 font-medium tabular-nums">{row.count}</span>
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -205,26 +269,33 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {data.by_branch.length > 1 && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle className="text-base">{t("dashboard.byBranch")}</CardTitle>
-          </CardHeader>
-          <CardContent>
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-base">{t("dashboard.byBranch")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {data.by_branch.length ? (
             <ul className="space-y-2.5">
               {data.by_branch.map((row) => (
-                <li
-                  key={row.branch_id ?? "none"}
-                  className="flex items-center justify-between gap-4 text-sm"
-                >
-                  <span className="truncate">{row.name}</span>
-                  <span className="shrink-0 font-medium tabular-nums">{row.count}</span>
+                <li key={row.branch_id ?? "none"}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-between gap-4 rounded-md px-2 py-1 text-left text-sm transition-colors hover:bg-accent"
+                    onClick={() =>
+                      openApplications({ branch_id: row.branch_id ?? "null" })
+                    }
+                  >
+                    <span className="truncate">{row.name}</span>
+                    <span className="shrink-0 font-medium tabular-nums">{row.count}</span>
+                  </button>
                 </li>
               ))}
             </ul>
-          </CardContent>
-        </Card>
-      )}
+          ) : (
+            <EmptyState title={t("dashboard.noData")} />
+          )}
+        </CardContent>
+      </Card>
     </>
   );
 }

@@ -3,10 +3,14 @@
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 from app.api.applications import _to_item
+from app.bot import handlers
 from app.bot.forms import build_answers_payload
-from app.bot.fsm import QuestionSnapshot
+from app.bot.fsm import FormState, QuestionSnapshot
 from app.core.config import settings
 from app.services.storage import find_legacy_candidate_file_urls
 
@@ -37,6 +41,7 @@ def test_answer_payload_snapshots_candidate_profile_roles():
         "photo-id": {
             "value": "portrait.jpg",
             "raw": "https://test.example.com/files/portrait.jpg",
+            "file_is_image": True,
         },
         "resume-id": {
             "value": "resume.pdf",
@@ -52,10 +57,47 @@ def test_answer_payload_snapshots_candidate_profile_roles():
     assert payload[0]["file_url"] is None
     assert payload[1]["profile_field"] == "candidate_photo"
     assert payload[1]["file_url"] == "https://test.example.com/files/portrait.jpg"
+    assert payload[1]["file_is_image"] is True
     # Keep every upload URL so turning the photo role on later also works for applications
     # submitted before that configuration change.
     assert payload[2]["profile_field"] is None
     assert payload[2]["file_url"] == "https://test.example.com/files/resume.pdf"
+    assert payload[2]["file_is_image"] is False
+
+
+@pytest.mark.asyncio
+async def test_confirmation_resends_uploaded_photo_and_document():
+    state = FormState(
+        vacancy_id=uuid.uuid4().hex,
+        questions=[
+            QuestionSnapshot(id="photo", text="Photo", type="file"),
+            QuestionSnapshot(id="resume", text="Resume", type="file"),
+        ],
+        answers={
+            "photo": {
+                "value": "portrait.jpg",
+                "display": "portrait.jpg",
+                "telegram_file_id": "telegram-photo-id",
+                "telegram_file_kind": "photo",
+            },
+            "resume": {
+                "value": "resume.pdf",
+                "display": "resume.pdf",
+                "telegram_file_id": "telegram-document-id",
+                "telegram_file_kind": "document",
+            },
+        },
+    )
+    message = SimpleNamespace(answer_photo=AsyncMock(), answer_document=AsyncMock())
+
+    await handlers._send_review_uploads(message, state)
+
+    message.answer_photo.assert_awaited_once_with(
+        "telegram-photo-id", caption="📎 portrait.jpg"
+    )
+    message.answer_document.assert_awaited_once_with(
+        "telegram-document-id", caption="📎 resume.pdf"
+    )
 
 
 def test_application_item_uses_profile_answers_with_telegram_fallbacks():

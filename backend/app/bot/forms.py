@@ -254,6 +254,11 @@ def build_answers_payload(questions: list[QuestionSnapshot], answers: dict) -> l
                 "file_url": (
                     stored.get("raw") if q.type == "file" and not stored.get("skipped") else None
                 ),
+                "file_is_image": (
+                    bool(stored.get("file_is_image"))
+                    if q.type == "file" and not stored.get("skipped")
+                    else False
+                ),
             }
         )
     return payload

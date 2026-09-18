@@ -643,6 +643,9 @@ async def _store_answer(
     display=None,
     raw=None,
     skipped: bool = False,
+    file_is_image: bool = False,
+    telegram_file_id: str | None = None,
+    telegram_file_kind: str | None = None,
 ) -> None:
     """Record the answer to the current question and advance, or move to confirmation.
 
@@ -658,6 +661,9 @@ async def _store_answer(
         "display": display if display is not None else value,
         "raw": raw,
         "skipped": skipped,
+        "file_is_image": file_is_image,
+        "telegram_file_id": telegram_file_id,
+        "telegram_file_kind": telegram_file_kind,
     }
     state.pending = []
     state.current_index += 1
@@ -665,6 +671,7 @@ async def _store_answer(
     if state.current_index >= state.total:
         state.state = fsm.STATE_CONFIRMING
         await fsm.save(redis, ctx.bot_id, tg_user_id, state)
+        await _send_review_uploads(message, state)
         await _send_menu(
             message, redis, ctx, tg_user_id,
             render_summary(lang, state.questions, state.answers),
@@ -674,6 +681,31 @@ async def _store_answer(
 
     await fsm.save(redis, ctx.bot_id, tg_user_id, state)
     await _ask_current(message, redis, ctx, tg_user_id, state, lang)
+
+
+async def _send_review_uploads(message: Message, state: fsm.FormState) -> None:
+    """Resend uploads before the confirmation summary so candidates can inspect them.
+
+    Telegram file IDs are preferable to our storage URLs here: they work even when local
+    development storage is not publicly reachable, and avoid downloading/re-uploading the
+    candidate's file.
+    """
+    for question in state.questions:
+        if question.type != "file":
+            continue
+        answer = state.answers.get(question.id) or {}
+        file_id = answer.get("telegram_file_id")
+        if answer.get("skipped") or not file_id:
+            continue
+        filename = str(answer.get("display") or answer.get("value") or "file")
+        caption = f"📎 {escape(filename)}"
+        try:
+            if answer.get("telegram_file_kind") == "photo":
+                await message.answer_photo(file_id, caption=caption)
+            else:
+                await message.answer_document(file_id, caption=caption)
+        except Exception as exc:  # noqa: BLE001 — the text summary must still be sent
+            log.warning("review_upload_preview_failed", error=str(exc), file_id=file_id)
 
 
 async def _start_application(
@@ -1314,10 +1346,12 @@ async def on_file(message: Message, ctx: BotContext, redis: Redis, lang: str) ->
         file_id, filename = message.document.file_id, message.document.file_name or "document"
         size = message.document.file_size or 0
         mime = message.document.mime_type or "application/octet-stream"
+        telegram_file_kind = "document"
     else:
         largest = message.photo[-1]
         file_id, filename = largest.file_id, f"photo_{largest.file_unique_id}.jpg"
         size, mime = largest.file_size or 0, "image/jpeg"
+        telegram_file_kind = "photo"
 
     if size > settings.MAX_UPLOAD_BYTES:
         await message.answer(
@@ -1333,8 +1367,8 @@ async def on_file(message: Message, ctx: BotContext, redis: Redis, lang: str) ->
         await message.answer(t(lang, "generic_error"))
         return
 
+    detected_image = sniff_image(content)
     if question.profile_field == "candidate_photo":
-        detected_image = sniff_image(content)
         if detected_image is None:
             await message.answer(t(lang, "err_profile_photo_image"))
             return
@@ -1348,7 +1382,17 @@ async def on_file(message: Message, ctx: BotContext, redis: Redis, lang: str) ->
     url = await save_candidate_file(ctx.company_id, content, filename, mime)
     await message.answer(t(lang, "file_received"))
     await _store_answer(
-        message, ctx, redis, state, lang, message.from_user.id, value=filename, raw=url
+        message,
+        ctx,
+        redis,
+        state,
+        lang,
+        message.from_user.id,
+        value=filename,
+        raw=url,
+        file_is_image=detected_image is not None,
+        telegram_file_id=file_id,
+        telegram_file_kind=telegram_file_kind,
     )
 
 

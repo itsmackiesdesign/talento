@@ -5,18 +5,16 @@ owns its own event loop and session — nothing is shared with the web process.
 """
 
 import asyncio
-import re
 import uuid
 from collections.abc import Coroutine
 from datetime import UTC, datetime
-from html import escape, unescape
+from html import escape
 from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy import select, update
 
 from app.bot.forms import render_vacancy_card
-from app.bot.markup import to_plain
 from app.bot.texts import t
 from app.core.config import settings
 from app.core.crypto import decrypt
@@ -31,7 +29,6 @@ from app.models import (
     Candidate,
     Company,
     CompanyCandidate,
-    Question,
     Vacancy,
     VacancyCampaign,
     VacancyCampaignRecipient,
@@ -44,7 +41,6 @@ log = get_logger(__name__)
 
 TELEGRAM_CAPTION_LIMIT = 1024
 TELEGRAM_MESSAGE_LIMIT = 4000
-_HTML_TAG = re.compile(r"<[^>]+>")
 
 
 @celery_app.task(name="talento.send_vacancy_campaign", max_retries=1, default_retry_delay=60)
@@ -222,19 +218,16 @@ def _panel_button(application_id: uuid.UUID) -> dict[str, Any] | None:
 async def _send_hr_application_notification(
     chat_id: int,
     summary: str,
-    common_answers: str | None,
     photo_url: str | None,
     reply_markup: dict[str, Any] | None,
 ) -> None:
-    full_text = f"{summary}\n\n{common_answers}" if common_answers else summary
     if photo_url:
-        caption = full_text if len(full_text) <= TELEGRAM_CAPTION_LIMIT else summary
         try:
             await tg.send_photo(
                 settings.PLATFORM_BOT_TOKEN,
                 chat_id,
                 photo_url,
-                caption,
+                summary,
                 reply_markup=reply_markup,
             )
         except tg.TelegramError as exc:
@@ -247,12 +240,9 @@ async def _send_hr_application_notification(
                 error=exc.description,
             )
         else:
-            if caption != full_text and common_answers:
-                for chunk in _message_chunks(common_answers):
-                    await tg.send_message(settings.PLATFORM_BOT_TOKEN, chat_id, chunk)
             return
 
-    for index, chunk in enumerate(_message_chunks(full_text)):
+    for index, chunk in enumerate(_message_chunks(summary)):
         await tg.send_message(
             settings.PLATFORM_BOT_TOKEN,
             chat_id,
@@ -277,39 +267,6 @@ def _message_chunks(text: str) -> list[str]:
     return chunks or [""]
 
 
-def _plain_question(text: str) -> str:
-    without_html = _HTML_TAG.sub("", to_plain(text or ""))
-    return " ".join(unescape(without_html).split())
-
-
-def _answer_value(answer: dict[str, Any]) -> str:
-    if answer.get("skipped") or answer.get("answer") is None:
-        return "—"
-    value = answer.get("answer")
-    if isinstance(value, list):
-        return ", ".join(str(item) for item in value)
-    return str(value)
-
-
-def _common_answers_text(
-    answers: list[dict[str, Any]], current_common_question_ids: set[str]
-) -> str | None:
-    lines: list[str] = []
-    for answer in answers:
-        # New snapshots carry their scope. The ID fallback keeps applications submitted
-        # before this release useful while the original common question still exists.
-        is_common = answer.get("is_common") is True or (
-            "is_common" not in answer and answer.get("question_id") in current_common_question_ids
-        )
-        if not is_common or answer.get("profile_field") == "candidate_photo":
-            continue
-        label = _plain_question(str(answer.get("question_text") or "")) or "Вопрос"
-        lines.append(f"<b>{escape(label)}</b>\n{escape(_answer_value(answer))}")
-    if not lines:
-        return None
-    return "📝 <b>Ответы на общие вопросы</b>\n\n" + "\n\n".join(lines)
-
-
 async def _notify_new_application(application_id: str) -> str:
     if not settings.PLATFORM_BOT_TOKEN:
         log.info("hr_notify_skipped", reason="no_platform_bot", application_id=application_id)
@@ -329,15 +286,6 @@ async def _notify_new_application(application_id: str) -> str:
         if row is None:
             return "application not found"
         application, vacancy, candidate, company, branch = row
-        current_common_question_ids = set(
-            await db.scalars(
-                select(Question.id).where(
-                    Question.company_id == company.id,
-                    Question.vacancy_id.is_(None),
-                )
-            )
-        )
-        common_ids = {question_id.hex for question_id in current_common_question_ids}
         chat_id = company.notification_chat_id
 
     if chat_id is None:
@@ -350,14 +298,12 @@ async def _notify_new_application(application_id: str) -> str:
     lines.append(f"💼 Вакансия: {escape(vacancy.title)}")
     lines.append(f"👤 Кандидат: {escape(profile.name)}")
     summary = "\n".join(lines)
-    common_answers = _common_answers_text(application.answers or [], common_ids)
     reply_markup = _panel_button(application.id)
 
     try:
         await _send_hr_application_notification(
             chat_id,
             summary,
-            common_answers,
             profile.photo_url,
             reply_markup,
         )

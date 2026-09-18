@@ -36,10 +36,10 @@ function useTheme() {
 
 const NAV = [
   { to: "/", key: "dashboard", icon: LayoutDashboard, end: true },
+  { to: "/applications", key: "applications", icon: Inbox, end: false },
   { to: "/vacancies", key: "vacancies", icon: Briefcase, end: false },
   { to: "/branches", key: "branches", icon: Building2, end: false },
   { to: "/news", key: "news", icon: Newspaper, end: false },
-  { to: "/applications", key: "applications", icon: Inbox, end: false },
   { to: "/settings", key: "settings", icon: Settings, end: false },
 ] as const;
 

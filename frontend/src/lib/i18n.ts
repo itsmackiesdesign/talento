@@ -105,6 +105,7 @@ const ru = {
     byVacancy: "По вакансиям",
     byBranch: "По филиалам",
     byStatus: "По статусам",
+    count: "Количество",
     noData: "Пока нет данных",
   },
   billing: {
@@ -303,6 +304,8 @@ const ru = {
     vacancy: "Вакансия",
     branch: "Филиал",
     date: "Дата",
+    dateFrom: "Дата с",
+    dateTo: "Дата по",
     status: "Статус",
     phone: "Телефон",
     answers: "Ответы анкеты",
@@ -601,7 +604,7 @@ const uz: typeof ru = {
     title: "Boshqaruv paneli", total: "Jami arizalar", last7: "7 kun ichida",
     last30: "30 kun ichida", activeVacancies: "Faol vakansiyalar", byDay: "Kunlar bo‘yicha",
     byVacancy: "Vakansiyalar bo‘yicha", byBranch: "Filiallar bo‘yicha", byStatus: "Holatlar bo‘yicha",
-    noData: "Hozircha ma’lumot yo‘q",
+    count: "Soni", noData: "Hozircha ma’lumot yo‘q",
   },
   billing: {
     title: "Balans va billing",
@@ -758,7 +761,8 @@ const uz: typeof ru = {
   },
   applications: {
     title: "Arizalar", kanban: "Kanban", table: "Jadval", export: "CSV eksport",
-    candidate: "Nomzod", vacancy: "Vakansiya", branch: "Filial", date: "Sana", status: "Holat",
+    candidate: "Nomzod", vacancy: "Vakansiya", branch: "Filial", date: "Sana",
+    dateFrom: "Boshlanish sanasi", dateTo: "Tugash sanasi", status: "Holat",
     phone: "Telefon", answers: "Anketa javoblari", comments: "Izohlar", history: "Holatlar tarixi",
     addComment: "Izoh qo‘shish", writeTelegram: "Telegramda yozish", empty: "Arizalar yo‘q",
     emptyDesc: "Nomzod botda ariza qoldirishi bilan u shu yerda paydo bo‘ladi",
@@ -1020,7 +1024,7 @@ const en: typeof ru = {
   dashboard: {
     title: "Dashboard", total: "Total applications", last7: "Last 7 days", last30: "Last 30 days",
     activeVacancies: "Active vacancies", byDay: "Applications per day", byVacancy: "By vacancy",
-    byBranch: "By branch", byStatus: "By status", noData: "No data yet",
+    byBranch: "By branch", byStatus: "By status", count: "Count", noData: "No data yet",
   },
   billing: {
     title: "Balance and billing",
@@ -1176,7 +1180,8 @@ const en: typeof ru = {
   },
   applications: {
     title: "Applications", kanban: "Kanban", table: "Table", export: "Export CSV",
-    candidate: "Candidate", vacancy: "Vacancy", branch: "Branch", date: "Date", status: "Status",
+    candidate: "Candidate", vacancy: "Vacancy", branch: "Branch", date: "Date",
+    dateFrom: "Date from", dateTo: "Date to", status: "Status",
     phone: "Phone", answers: "Form answers", comments: "Comments", history: "Status history",
     addComment: "Add a comment", writeTelegram: "Message on Telegram", empty: "No applications yet",
     emptyDesc: "As soon as someone applies in the bot, it shows up here",

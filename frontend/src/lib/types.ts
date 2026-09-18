@@ -259,6 +259,9 @@ export interface Answer {
   type: QuestionType;
   answer: string | string[] | null;
   skipped: boolean;
+  profile_field?: QuestionProfileField | null;
+  file_url?: string | null;
+  file_is_image?: boolean;
 }
 
 export interface ApplicationListItem {

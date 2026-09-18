@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, ExternalLink, Inbox, KanbanSquare, Table2, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { PageHeader } from "@/components/layout";
@@ -37,7 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api, downloadExport } from "@/lib/api";
-import type { ApplicationListItem, ApplicationStatusOut } from "@/lib/types";
+import type { Answer, ApplicationListItem, ApplicationStatusOut } from "@/lib/types";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 
 const ALL = "__all__";
@@ -50,7 +50,9 @@ type PendingStatusChange = {
 
 function questionTextToPlainText(value: string): string {
   const withoutMarkdown = value
+    .replace(/!\[([^\]]*)]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s*|[-+*]\s+)/gm, "")
     .replace(/\*\*|__|~~|```|`|_/g, "");
   const parsed = new DOMParser().parseFromString(withoutMarkdown, "text/html");
   return (parsed.body.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -63,6 +65,48 @@ function QuestionLabel({ text }: { text: string }) {
       {plainText}
     </dt>
   );
+}
+
+function isImageFile(answer: Answer): boolean {
+  if (answer.file_is_image !== undefined) return answer.file_is_image;
+  if (!answer.file_url) return false;
+  try {
+    return /\.(?:jpe?g|png|gif|webp)$/i.test(new URL(answer.file_url).pathname);
+  } catch {
+    return /\.(?:jpe?g|png|gif|webp)(?:\?|$)/i.test(answer.file_url);
+  }
+}
+
+function AnswerValue({ answer, skippedLabel }: { answer: Answer; skippedLabel: string }) {
+  if (answer.skipped || answer.answer === null) {
+    return <span className="text-muted-foreground">{skippedLabel}</span>;
+  }
+  if (answer.type === "file" && answer.file_url) {
+    const filename = Array.isArray(answer.answer) ? answer.answer.join(", ") : answer.answer;
+    return (
+      <div className="mt-1 space-y-2">
+        {isImageFile(answer) && (
+          <a href={answer.file_url} target="_blank" rel="noreferrer" className="block w-fit">
+            <img
+              src={answer.file_url}
+              alt={filename}
+              loading="lazy"
+              className="max-h-80 max-w-full rounded-xl border object-contain"
+            />
+          </a>
+        )}
+        <a
+          href={answer.file_url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
+        >
+          <ExternalLink className="h-3.5 w-3.5" /> {filename}
+        </a>
+      </div>
+    );
+  }
+  return <>{Array.isArray(answer.answer) ? answer.answer.join(", ") : answer.answer}</>;
 }
 
 function CandidateAvatar({
@@ -213,12 +257,18 @@ export default function ApplicationsPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { id: routeId } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
 
   const [view, setView] = useState<"kanban" | "table">("kanban");
-  const [vacancyFilter, setVacancyFilter] = useState(ALL);
-  const [branchFilter, setBranchFilter] = useState(ALL);
-  const [search, setSearch] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
+  const [vacancyFilter, setVacancyFilter] = useState(
+    () => searchParams.get("vacancy_id") || ALL,
+  );
+  const [branchFilter, setBranchFilter] = useState(
+    () => searchParams.get("branch_id") || ALL,
+  );
+  const [search, setSearch] = useState(() => searchParams.get("search") || "");
+  const [dateFrom, setDateFrom] = useState(() => searchParams.get("date_from") || "");
+  const [dateTo, setDateTo] = useState(() => searchParams.get("date_to") || "");
   const [comment, setComment] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<PendingStatusChange | null>(null);
@@ -238,6 +288,7 @@ export default function ApplicationsPage() {
     branch_id: branchFilter === ALL ? undefined : branchFilter,
     search: search.trim() || undefined,
     date_from: dateFrom || undefined,
+    date_to: dateTo || undefined,
     answers: Object.keys(answerFilters).length ? JSON.stringify(answerFilters) : undefined,
   };
 
@@ -408,7 +459,7 @@ export default function ApplicationsPage() {
         }
       />
 
-      <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-4 grid items-end gap-2 sm:grid-cols-2 lg:grid-cols-5">
         <Input
           placeholder={t("applications.searchPlaceholder")}
           value={search}
@@ -441,7 +492,30 @@ export default function ApplicationsPage() {
             ))}
           </SelectContent>
         </Select>
-        <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        <div className="space-y-1">
+          <Label htmlFor="application-date-from" className="text-xs text-muted-foreground">
+            {t("applications.dateFrom")}
+          </Label>
+          <Input
+            id="application-date-from"
+            type="date"
+            max={dateTo || undefined}
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="application-date-to" className="text-xs text-muted-foreground">
+            {t("applications.dateTo")}
+          </Label>
+          <Input
+            id="application-date-to"
+            type="date"
+            min={dateFrom || undefined}
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
+        </div>
       </div>
 
       {/* Only shown once a single vacancy is picked — that's what fixes which questions
@@ -462,15 +536,15 @@ export default function ApplicationsPage() {
               }
             >
               <SelectTrigger>
-                <SelectValue placeholder={q.text} />
+                <SelectValue placeholder={questionTextToPlainText(q.text)} />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value={ALL}>
-                  {q.text}: {t("common.all")}
+                  {questionTextToPlainText(q.text)}: {t("common.all")}
                 </SelectItem>
                 {(q.options ?? []).map((opt) => (
                   <SelectItem key={opt} value={opt}>
-                    {opt}
+                    {questionTextToPlainText(opt)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -572,19 +646,12 @@ export default function ApplicationsPage() {
           ) : detail.data ? (
             <>
               <DialogHeader>
-                <div className="flex items-center gap-3">
-                  <CandidateAvatar
-                    name={detail.data.candidate_name}
-                    photoUrl={detail.data.candidate_photo_url}
-                    className="h-12 w-12"
-                  />
-                  <div className="min-w-0">
-                    <DialogTitle>{detail.data.candidate_name}</DialogTitle>
-                    <DialogDescription>
-                      {detail.data.vacancy_title}
-                      {detail.data.branch_name && ` · ${detail.data.branch_name}`}
-                    </DialogDescription>
-                  </div>
+                <div className="min-w-0">
+                  <DialogTitle>{detail.data.candidate_name}</DialogTitle>
+                  <DialogDescription>
+                    {detail.data.vacancy_title}
+                    {detail.data.branch_name && ` · ${detail.data.branch_name}`}
+                  </DialogDescription>
                 </div>
               </DialogHeader>
 
@@ -648,26 +715,39 @@ export default function ApplicationsPage() {
 
               <section className="space-y-3">
                 <h3 className="text-sm font-semibold">{t("applications.answers")}</h3>
+                {detail.data.candidate_photo_url && (
+                  <div className="flex justify-center py-2">
+                    <CandidateAvatar
+                      name={detail.data.candidate_name}
+                      photoUrl={detail.data.candidate_photo_url}
+                      className="h-24 w-24"
+                    />
+                  </div>
+                )}
                 {detail.data.answers.length === 0 ? (
                   <p className="text-sm text-muted-foreground">—</p>
                 ) : (
                   <dl className="space-y-3">
-                    {detail.data.answers.map((answer) => (
-                      <div key={answer.question_id}>
-                        <QuestionLabel text={answer.question_text} />
-                        <dd className="text-sm">
-                          {answer.skipped || answer.answer === null ? (
-                            <span className="text-muted-foreground">
-                              {t("applications.skipped")}
-                            </span>
-                          ) : Array.isArray(answer.answer) ? (
-                            answer.answer.join(", ")
-                          ) : (
-                            answer.answer
-                          )}
-                        </dd>
-                      </div>
-                    ))}
+                    {detail.data.answers.map((answer) => {
+                      const isMainPhoto =
+                        answer.profile_field === "candidate_photo" ||
+                        Boolean(
+                          answer.file_url &&
+                            answer.file_url === detail.data?.candidate_photo_url,
+                        );
+                      if (isMainPhoto) return null;
+                      return (
+                        <div key={answer.question_id}>
+                          <QuestionLabel text={answer.question_text} />
+                          <dd className="text-sm">
+                            <AnswerValue
+                              answer={answer}
+                              skippedLabel={t("applications.skipped")}
+                            />
+                          </dd>
+                        </div>
+                      );
+                    })}
                   </dl>
                 )}
               </section>
