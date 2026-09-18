@@ -140,6 +140,8 @@ async def create_company(payload: CompanyCreate, user: CurrentUser, db: DB) -> C
                 translations=translations,
                 notify_candidate=notify,
                 color=color,
+                requires_reason=system_key == "rejected",
+                reasons=[],
                 sort_order=index,
             )
         )

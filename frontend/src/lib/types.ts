@@ -162,6 +162,9 @@ export interface ApplicationStatusOut {
   translations: Translations;
   notify_candidate: boolean;
   color: string;
+  requires_reason: boolean;
+  reasons: string[];
+  system_key: "new" | "hired" | "rejected" | null;
   is_system: boolean;
   sort_order: number;
   application_count: number;
@@ -171,6 +174,8 @@ export interface Vacancy {
   id: string;
   branch_id: string | null;
   branch_name: string | null;
+  branch_ids: string[];
+  branch_names: string[];
   title: string;
   description: string;
   city: string | null;
@@ -186,6 +191,40 @@ export interface Vacancy {
   created_at: string;
   application_count: number;
   deep_link: string | null;
+}
+
+export type CampaignAudience = "everyone" | "selected_vacancies" | "selected_statuses";
+
+export interface VacancyCampaignTarget {
+  audience_type: CampaignAudience;
+  source_vacancy_ids: string[];
+  source_status_ids: string[];
+  branch_ids: string[];
+  languages: ("ru" | "uz" | "en")[];
+  excluded_candidate_ids: string[];
+  exclude_applied: boolean;
+  exclude_rejected: boolean;
+}
+
+export interface CampaignCandidate {
+  id: string;
+  first_name: string;
+  telegram_username: string | null;
+}
+
+export interface VacancyCampaign extends VacancyCampaignTarget {
+  id: string;
+  vacancy_id: string;
+  intro_text: string;
+  status: "scheduled" | "queued" | "sending" | "completed" | "failed" | "cancelled";
+  scheduled_at: string | null;
+  total_recipients: number;
+  sent_count: number;
+  failed_count: number;
+  blocked_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
 }
 
 export interface Question {
@@ -248,6 +287,8 @@ export interface StatusHistoryEntry {
   // status itself is later renamed or deleted. See ApplicationStatusHistory in models.py.
   from_status_label: string | null;
   to_status_label: string;
+  reason: string | null;
+  reason_is_other: boolean;
   changed_by_name: string | null;
   created_at: string;
 }

@@ -12,12 +12,14 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Column,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
     func,
@@ -37,6 +39,28 @@ def _uuid_pk() -> Mapped[uuid.UUID]:
 
 TS = DateTime(timezone=True)
 SIGNUP_BONUS_UZS = 20_000
+
+
+# A vacancy may be advertised by several branches. ``vacancies.branch_id`` remains as a
+# compatibility/primary-branch pointer for old API clients and existing integrations; this
+# association is the authoritative complete set.
+vacancy_branches = Table(
+    "vacancy_branches",
+    Base.metadata,
+    Column(
+        "vacancy_id",
+        PGUUID(as_uuid=True),
+        ForeignKey("vacancies.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "branch_id",
+        PGUUID(as_uuid=True),
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Index("ix_vacancy_branches_branch", "branch_id", "vacancy_id"),
+)
 
 
 class Company(Base):
@@ -194,7 +218,10 @@ class Branch(Base):
     translations: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
-    vacancies: Mapped[list["Vacancy"]] = relationship(back_populates="branch")
+    legacy_vacancies: Mapped[list["Vacancy"]] = relationship(back_populates="branch")
+    vacancies: Mapped[list["Vacancy"]] = relationship(
+        secondary=vacancy_branches, back_populates="branches"
+    )
 
 
 class Vacancy(Base):
@@ -230,7 +257,10 @@ class Vacancy(Base):
     translations: Mapped[dict[str, Any] | None] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
-    branch: Mapped[Branch | None] = relationship(back_populates="vacancies")
+    branch: Mapped[Branch | None] = relationship(back_populates="legacy_vacancies")
+    branches: Mapped[list[Branch]] = relationship(
+        secondary=vacancy_branches, back_populates="vacancies"
+    )
     questions: Mapped[list["Question"]] = relationship(
         back_populates="vacancy", cascade="all, delete-orphan"
     )
@@ -323,6 +353,111 @@ class Candidate(Base):
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
 
+class CompanyCandidate(Base):
+    """A candidate who has interacted with one tenant's bot.
+
+    Candidate Telegram identities are global, while notification consent and language are
+    tenant-specific. Keeping this join explicit prevents one tenant from ever broadcasting
+    to candidates known only to another tenant.
+    """
+
+    __tablename__ = "company_candidates"
+    __table_args__ = (
+        UniqueConstraint("company_id", "candidate_id", name="uq_company_candidate"),
+        Index("ix_company_candidates_company_active", "company_id", "notifications_enabled"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False
+    )
+    language: Mapped[str | None] = mapped_column(String(5))
+    notifications_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
+    last_interaction_at: Mapped[datetime] = mapped_column(
+        TS, server_default=func.now(), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+    candidate: Mapped[Candidate] = relationship()
+
+
+class VacancyCampaign(Base):
+    __tablename__ = "vacancy_campaigns"
+    __table_args__ = (
+        CheckConstraint(
+            "audience_type IN ('everyone','selected_vacancies','selected_statuses')",
+            name="ck_vacancy_campaign_audience",
+        ),
+        CheckConstraint(
+            "status IN ('scheduled','queued','sending','completed','failed','cancelled')",
+            name="ck_vacancy_campaign_status",
+        ),
+        Index("ix_vacancy_campaigns_company_created", "company_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("companies.id", ondelete="CASCADE"), nullable=False
+    )
+    vacancy_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
+    intro_text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    audience_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_vacancy_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    source_status_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    branch_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    languages: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    excluded_candidate_ids: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
+    exclude_applied: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    exclude_rejected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    scheduled_at: Mapped[datetime | None] = mapped_column(TS)
+    total_recipients: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sent_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    failed_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    blocked_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(TS)
+    completed_at: Mapped[datetime | None] = mapped_column(TS)
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+    vacancy: Mapped[Vacancy] = relationship()
+
+
+class VacancyCampaignRecipient(Base):
+    __tablename__ = "vacancy_campaign_recipients"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "candidate_id", name="uq_campaign_recipient"),
+        CheckConstraint(
+            "status IN ('pending','sent','blocked','failed')",
+            name="ck_campaign_recipient_status",
+        ),
+        Index("ix_campaign_recipients_campaign_status", "campaign_id", "status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    campaign_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("vacancy_campaigns.id", ondelete="CASCADE"), nullable=False
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    language: Mapped[str | None] = mapped_column(String(5))
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(TS)
+    created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
+
+
 # The three stages every company starts with and can never delete — see ApplicationStatus.
 SYSTEM_STATUS_KEYS = ("new", "hired", "rejected")
 
@@ -398,6 +533,12 @@ class ApplicationStatus(Base):
     color: Mapped[str] = mapped_column(
         String(7), default="#3b82f6", server_default="#3b82f6", nullable=False
     )
+    # Rejected applications always require a reason. Custom statuses may opt in too, which
+    # keeps the feature useful if a tenant calls its terminal step "Cancelled" instead.
+    requires_reason: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
+    reasons: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
@@ -421,6 +562,11 @@ class Application(Base):
     vacancy_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("vacancies.id", ondelete="CASCADE"), nullable=False
     )
+    # The branch through which the candidate opened this vacancy. This must live on the
+    # application now that a vacancy can be available at more than one branch.
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("branches.id", ondelete="SET NULL")
+    )
     candidate_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("candidates.id", ondelete="CASCADE"), nullable=False
     )
@@ -435,6 +581,7 @@ class Application(Base):
     created_at: Mapped[datetime] = mapped_column(TS, server_default=func.now(), nullable=False)
 
     vacancy: Mapped[Vacancy] = relationship()
+    branch: Mapped[Branch | None] = relationship()
     candidate: Mapped[Candidate] = relationship()
     status: Mapped[ApplicationStatus] = relationship()
     comments: Mapped[list["ApplicationComment"]] = relationship(
@@ -480,6 +627,10 @@ class ApplicationStatusHistory(Base):
     )
     from_status_label: Mapped[str | None] = mapped_column(Text)
     to_status_label: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    reason_is_other: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     changed_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL")
     )

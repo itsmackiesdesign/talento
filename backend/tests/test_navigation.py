@@ -6,13 +6,19 @@ Everything is driven by tapping, the way a candidate does it.
 import uuid
 
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from app.core.crypto import encrypt
+from app.models import Application, Branch, Company, News, Vacancy, vacancy_branches
 from app.models import Bot as BotModel
-from app.models import Branch, Company, News, Vacancy
-from tests.conftest import BOT_TOKEN, TestSession, make_company, tap, tap_matching
-from tests.conftest import _seed_default_statuses
+from tests.conftest import (
+    BOT_TOKEN,
+    TestSession,
+    _seed_default_statuses,
+    make_company,
+    tap,
+    tap_matching,
+)
 from tests.conftest import feed as _feed
 
 
@@ -55,12 +61,18 @@ async def full_tenant():
         db.add_all([bot_row, chilanzar, yunusabad])
         await db.flush()
 
+        barista = Vacancy(
+            company_id=company.id,
+            branch_id=chilanzar.id,
+            branches=[chilanzar],
+            title="Бариста",
+            description="Хорошая работа",
+            status="active",
+            sort_order=0,
+        )
         db.add_all(
             [
-                Vacancy(
-                    company_id=company.id, branch_id=chilanzar.id, title="Бариста",
-                    description="Хорошая работа", status="active", sort_order=0,
-                ),
+                barista,
                 Vacancy(
                     company_id=company.id, title="Курьер", description="Свободный график",
                     status="active", is_hot=True, sort_order=1,
@@ -80,6 +92,8 @@ async def full_tenant():
             "company_id": company.id,
             "bot_id": bot_row.id,
             "branch_id": chilanzar.id,
+            "other_branch_id": yunusabad.id,
+            "vacancy_id": barista.id,
         }
 
 
@@ -253,12 +267,60 @@ async def test_type_menu_skipped_when_nothing_is_hot(bot, session, full_tenant):
     assert "Выберите филиал" in session.last_text
 
 
+async def test_direct_multi_branch_vacancy_asks_branch_and_records_it(
+    bot, session, full_tenant
+):
+    async with TestSession() as db:
+        await db.execute(
+            insert(vacancy_branches).values(
+                vacancy_id=full_tenant["vacancy_id"],
+                branch_id=full_tenant["other_branch_id"],
+            )
+        )
+        await db.commit()
+
+    await _feed(bot, full_tenant, text=f"/start vacancy_{full_tenant['vacancy_id'].hex}")
+    await tap(bot, full_tenant, "✅ Откликнуться")
+    assert "Выберите филиал" in session.last_text
+    await tap_matching(bot, full_tenant, session, "Юнусабад")
+
+    async with TestSession() as db:
+        application = await db.scalar(select(Application))
+        assert application.branch_id == full_tenant["other_branch_id"]
+
+
 async def test_no_branch_mode_goes_straight_to_a_flat_list(bot, session, tenant):
     await _feed(bot, tenant, text="/start")
     session.clear()
     await tap(bot, tenant, "📋 Вакансии")
     assert "Выберите вакансию" in session.last_text
     assert "Бариста" in session.buttons
+
+
+async def test_single_general_bucket_has_working_uzbek_back_navigation(
+    bot, session, multi_tenant
+):
+    """No branch picker exists when only general vacancies are active, so Back goes home."""
+    async with TestSession() as db:
+        company = await db.get(Company, multi_tenant["company_id"])
+        company.branches_enabled = True
+        await db.commit()
+
+    await _feed(bot, multi_tenant, text="/start")
+    await tap(bot, multi_tenant, "O‘zbekcha")
+    session.clear()
+    await tap(bot, multi_tenant, "📋 Vakansiyalar")
+
+    assert "Barista" in session.buttons
+    assert "⬅️ Filiallarga" not in session.buttons
+    assert "🏠 Asosiy menyu" in session.buttons
+
+    # Old keyboards already present in Telegram still send this legacy action. It must
+    # navigate away immediately rather than redraw the same general-vacancy list.
+    session.clear()
+    await _feed(bot, multi_tenant, data="back:branches")
+    assert "Bo‘limni tanlang" in session.last_text
+    assert "📋 Vakansiyalar" in session.buttons
 
 
 async def test_applying_from_the_hot_list_still_works(bot, session, full_tenant):

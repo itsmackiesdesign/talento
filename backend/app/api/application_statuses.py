@@ -95,6 +95,8 @@ async def create_status(
         ),
         notify_candidate=payload.notify_candidate,
         color=payload.color.lower(),
+        requires_reason=payload.requires_reason,
+        reasons=payload.reasons,
         sort_order=next_order,
     )
     db.add(row)
@@ -111,7 +113,10 @@ async def update_status(
     data = payload.model_dump(exclude_unset=True)
     # System steps remain structurally locked, but their presentation color belongs to the
     # tenant just like every custom step's color.
-    if row.is_system and set(data) - {"color"}:
+    allowed_system_fields = {"color"}
+    if row.system_key == "rejected":
+        allowed_system_fields.add("reasons")
+    if row.is_system and set(data) - allowed_system_fields:
         _require_custom(row)
     if "label" in data:
         data["label"] = data["label"].strip()

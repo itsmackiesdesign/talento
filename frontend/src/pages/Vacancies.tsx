@@ -7,7 +7,9 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Send,
   Trash2,
+  Users,
 } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -30,7 +32,7 @@ import {
   DialogTitle,
   DrawerContent,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { Input, Textarea } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -47,7 +49,15 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { api } from "@/lib/api";
-import type { Bot, Vacancy, VacancyStatus } from "@/lib/types";
+import type {
+  ApplicationStatusOut,
+  Bot,
+  CampaignCandidate,
+  CampaignAudience,
+  Vacancy,
+  VacancyCampaignTarget,
+  VacancyStatus,
+} from "@/lib/types";
 import { salaryLabel } from "@/lib/utils";
 
 const NO_BRANCH = "__none__";
@@ -61,6 +71,7 @@ const EMPTY: Partial<Vacancy> = {
   currency: "UZS",
   status: "draft",
   branch_id: null,
+  branch_ids: [],
   is_hot: false,
   photo_url: "",
 };
@@ -80,6 +91,7 @@ export default function VacanciesPage() {
   const [duplicating, setDuplicating] = useState<Vacancy | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<string>(NO_BRANCH);
   const [deleting, setDeleting] = useState<Vacancy | null>(null);
+  const [campaignVacancy, setCampaignVacancy] = useState<Vacancy | null>(null);
 
   const company = useQuery({ queryKey: ["company"], queryFn: api.company.get });
   const branches = useQuery({ queryKey: ["branches"], queryFn: api.branches.list });
@@ -112,14 +124,13 @@ export default function VacanciesPage() {
         salary_to: v.salary_to ?? null,
         currency: v.currency || "UZS",
         status: v.status,
-        branch_id: v.branch_id ?? null,
+        branch_ids: v.branch_ids ?? (v.branch_id ? [v.branch_id] : []),
         is_hot: v.is_hot ?? false,
         photo_url: v.photo_url?.trim() || null,
         translations: v.translations ?? {},
       };
-      // `clear_branch` tells the API that a null branch_id means "detach", not "unchanged".
       return v.id
-        ? api.vacancies.update(v.id, { ...payload, clear_branch: payload.branch_id === null })
+        ? api.vacancies.update(v.id, payload)
         : api.vacancies.create(payload);
     },
     onSuccess: async () => {
@@ -235,7 +246,9 @@ export default function VacanciesPage() {
                     )}
                   </Badge>
                   {vacancy.is_hot && <Badge variant="warning">{t("vacancies.isHot")}</Badge>}
-                  {vacancy.branch_name && <Badge variant="outline">{vacancy.branch_name}</Badge>}
+                  {vacancy.branch_names.map((name) => (
+                    <Badge key={name} variant="outline">{name}</Badge>
+                  ))}
                 </div>
                 <p className="truncate text-xs text-muted-foreground">
                   {[
@@ -278,6 +291,11 @@ export default function VacanciesPage() {
                   >
                     <CopyPlus /> {t("vacancies.duplicate")}
                   </DropdownMenuItem>
+                  {bot.data && vacancy.status === "active" && (
+                    <DropdownMenuItem onSelect={() => setCampaignVacancy(vacancy)}>
+                      <Send /> {t("campaign.sendNotification")}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onSelect={() => setEditing(vacancy)}>
                     <Pencil /> {t("common.edit")}
@@ -313,6 +331,23 @@ export default function VacanciesPage() {
               onCancel={() => setEditing(null)}
               onSubmit={() => save.mutate(editing)}
               t={t}
+            />
+          )}
+        </DrawerContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(campaignVacancy)}
+        onOpenChange={(open) => !open && setCampaignVacancy(null)}
+      >
+        <DrawerContent>
+          {campaignVacancy && (
+            <CampaignWizard
+              vacancy={campaignVacancy}
+              vacancies={list}
+              branches={branchList}
+              enabledLanguages={company.data?.enabled_languages ?? ["ru"]}
+              onClose={() => setCampaignVacancy(null)}
             />
           )}
         </DrawerContent>
@@ -380,6 +415,381 @@ export default function VacanciesPage() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+const EMPTY_TARGET: VacancyCampaignTarget = {
+  audience_type: "everyone",
+  source_vacancy_ids: [],
+  source_status_ids: [],
+  branch_ids: [],
+  languages: [],
+  excluded_candidate_ids: [],
+  exclude_applied: false,
+  exclude_rejected: false,
+};
+
+function toggleId(values: string[], id: string) {
+  return values.includes(id) ? values.filter((value) => value !== id) : [...values, id];
+}
+
+function CampaignWizard({
+  vacancy,
+  vacancies,
+  branches,
+  enabledLanguages,
+  onClose,
+}: {
+  vacancy: Vacancy;
+  vacancies: Vacancy[];
+  branches: { id: string; name: string }[];
+  enabledLanguages: string[];
+  onClose: () => void;
+}) {
+  const { t } = useTranslation();
+  const [step, setStep] = useState(1);
+  const [intro, setIntro] = useState("");
+  const [target, setTarget] = useState<VacancyCampaignTarget>(EMPTY_TARGET);
+  const [schedule, setSchedule] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [candidateSearch, setCandidateSearch] = useState("");
+  const statuses = useQuery<ApplicationStatusOut[]>({
+    queryKey: ["application-statuses"],
+    queryFn: api.applicationStatuses.list,
+  });
+  const candidates = useQuery<CampaignCandidate[]>({
+    queryKey: ["campaign-candidates", candidateSearch],
+    queryFn: () => api.vacancyCampaigns.candidates(candidateSearch.trim() || undefined),
+    enabled: step === 2,
+  });
+  const targetIsValid =
+    target.audience_type === "everyone" ||
+    (target.audience_type === "selected_vacancies" && target.source_vacancy_ids.length > 0) ||
+    (target.audience_type === "selected_statuses" && target.source_status_ids.length > 0);
+  const estimate = useQuery({
+    queryKey: ["campaign-estimate", vacancy.id, target],
+    queryFn: () => api.vacancies.estimateCampaign(vacancy.id, target),
+    enabled: step >= 2 && targetIsValid,
+  });
+  const create = useMutation({
+    mutationFn: () =>
+      api.vacancies.createCampaign(vacancy.id, {
+        ...target,
+        intro_text: intro.trim(),
+        scheduled_at: schedule && scheduledAt ? new Date(scheduledAt).toISOString() : null,
+      }),
+    onSuccess: () => {
+      toast.success(schedule ? t("campaign.scheduled") : t("campaign.queued"));
+      onClose();
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const setAudience = (audience_type: CampaignAudience) =>
+    setTarget({
+      ...target,
+      audience_type,
+      source_vacancy_ids: audience_type === "selected_vacancies" ? target.source_vacancy_ids : [],
+      source_status_ids: audience_type === "selected_statuses" ? target.source_status_ids : [],
+    });
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <DialogHeader>
+        <DialogTitle>{t("campaign.title")}</DialogTitle>
+        <DialogDescription>{vacancy.title}</DialogDescription>
+      </DialogHeader>
+
+      <div className="my-4 flex gap-2 text-xs">
+        {[1, 2, 3].map((number) => (
+          <div
+            key={number}
+            className={`h-1 flex-1 rounded-full ${number <= step ? "bg-primary" : "bg-muted"}`}
+          />
+        ))}
+      </div>
+
+      <div className="flex-1 space-y-5 overflow-y-auto pr-1">
+        {step === 1 && (
+          <>
+            <div className="space-y-2">
+              <Label htmlFor="campaign-intro">{t("campaign.intro")}</Label>
+              <Textarea
+                id="campaign-intro"
+                rows={4}
+                maxLength={1000}
+                value={intro}
+                placeholder={t("campaign.introPlaceholder")}
+                onChange={(event) => setIntro(event.target.value)}
+              />
+            </div>
+            <div className="overflow-hidden rounded-2xl border bg-muted/30">
+              {vacancy.photo_url && (
+                <img src={vacancy.photo_url} alt="" className="h-40 w-full object-cover" />
+              )}
+              <div className="space-y-2 p-4">
+                <p className="text-xs font-medium uppercase text-muted-foreground">
+                  {t("campaign.preview")}
+                </p>
+                {intro && <p className="whitespace-pre-wrap text-sm">{intro}</p>}
+                <p className="font-semibold">💼 {vacancy.title}</p>
+                {vacancy.branch_name && <p className="text-sm">🏢 {vacancy.branch_name}</p>}
+                {vacancy.city && <p className="text-sm">📍 {vacancy.city}</p>}
+                <Button type="button" size="sm" className="w-full" disabled>
+                  {t("campaign.openVacancy")}
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {step === 2 && (
+          <>
+            <div className="space-y-2">
+              <Label>{t("campaign.audience")}</Label>
+              {(
+                ["everyone", "selected_vacancies", "selected_statuses"] as CampaignAudience[]
+              ).map((type) => (
+                <button
+                  type="button"
+                  key={type}
+                  onClick={() => setAudience(type)}
+                  className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left ${
+                    target.audience_type === type ? "border-primary bg-primary/5" : ""
+                  }`}
+                >
+                  <span
+                    className={`mt-0.5 h-4 w-4 rounded-full border ${
+                      target.audience_type === type ? "border-4 border-primary" : ""
+                    }`}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">{t(`campaign.${type}`)}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {t(`campaign.${type}Hint`)}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {target.audience_type === "selected_vacancies" && (
+              <PillPicker
+                label={t("campaign.chooseVacancies")}
+                values={target.source_vacancy_ids}
+                items={vacancies.map((item) => ({ id: item.id, label: item.title }))}
+                onToggle={(id) =>
+                  setTarget({
+                    ...target,
+                    source_vacancy_ids: toggleId(target.source_vacancy_ids, id),
+                  })
+                }
+              />
+            )}
+            {target.audience_type === "selected_statuses" && (
+              <PillPicker
+                label={t("campaign.chooseStatuses")}
+                values={target.source_status_ids}
+                items={(statuses.data ?? []).map((item) => ({ id: item.id, label: item.label }))}
+                onToggle={(id) =>
+                  setTarget({
+                    ...target,
+                    source_status_ids: toggleId(target.source_status_ids, id),
+                  })
+                }
+              />
+            )}
+
+            <div className="space-y-3 rounded-xl border p-3">
+              <Label>{t("campaign.exclusions")}</Label>
+              <SwitchRow
+                label={t("campaign.excludeApplied")}
+                checked={target.exclude_applied}
+                onChange={(value) => setTarget({ ...target, exclude_applied: value })}
+              />
+              <SwitchRow
+                label={t("campaign.excludeRejected")}
+                checked={target.exclude_rejected}
+                onChange={(value) => setTarget({ ...target, exclude_rejected: value })}
+              />
+            </div>
+
+            {branches.length > 0 && (
+              <PillPicker
+                label={t("campaign.filterBranches")}
+                values={target.branch_ids}
+                items={branches.map((item) => ({ id: item.id, label: item.name }))}
+                onToggle={(id) =>
+                  setTarget({ ...target, branch_ids: toggleId(target.branch_ids, id) })
+                }
+              />
+            )}
+            <PillPicker
+              label={t("campaign.filterLanguages")}
+              values={target.languages}
+              items={enabledLanguages.map((language) => ({
+                id: language,
+                label: language.toUpperCase(),
+              }))}
+              onToggle={(id) =>
+                setTarget({
+                  ...target,
+                  languages: toggleId(target.languages, id) as ("ru" | "uz" | "en")[],
+                })
+              }
+            />
+
+            <div className="space-y-2">
+              <Label>{t("campaign.excludeSpecific")}</Label>
+              <Input
+                value={candidateSearch}
+                placeholder={t("campaign.searchCandidate")}
+                onChange={(event) => setCandidateSearch(event.target.value)}
+              />
+              {target.excluded_candidate_ids.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {t("campaign.excludedCount", {
+                    count: target.excluded_candidate_ids.length,
+                  })}
+                </p>
+              )}
+              <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border p-2">
+                {(candidates.data ?? []).map((candidate) => {
+                  const selected = target.excluded_candidate_ids.includes(candidate.id);
+                  return (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      className={`flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm ${
+                        selected ? "bg-destructive/10 text-destructive" : "hover:bg-muted"
+                      }`}
+                      onClick={() =>
+                        setTarget({
+                          ...target,
+                          excluded_candidate_ids: toggleId(
+                            target.excluded_candidate_ids,
+                            candidate.id,
+                          ),
+                        })
+                      }
+                    >
+                      <span className="truncate">{candidate.first_name || t("campaign.unnamed")}</span>
+                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">
+                        {candidate.telegram_username ? `@${candidate.telegram_username}` : ""}
+                      </span>
+                    </button>
+                  );
+                })}
+                {!candidates.isFetching && (candidates.data?.length ?? 0) === 0 && (
+                  <p className="p-2 text-center text-xs text-muted-foreground">
+                    {t("campaign.noCandidates")}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 rounded-xl bg-primary/5 p-4">
+              <Users className="h-5 w-5 text-primary" />
+              <div>
+                <p className="text-xs text-muted-foreground">{t("campaign.estimated")}</p>
+                <p className="text-lg font-semibold">
+                  {estimate.isFetching ? "…" : (estimate.data?.count ?? 0)}
+                </p>
+              </div>
+            </div>
+          </>
+        )}
+
+        {step === 3 && (
+          <>
+            <div className="rounded-xl border p-4">
+              <p className="text-sm text-muted-foreground">{t("campaign.willReceive")}</p>
+              <p className="mt-1 text-3xl font-semibold">{estimate.data?.count ?? 0}</p>
+            </div>
+            <div className="space-y-3 rounded-xl border p-3">
+              <SwitchRow label={t("campaign.schedule") } checked={schedule} onChange={setSchedule} />
+              {schedule && (
+                <Input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  min={new Date().toISOString().slice(0, 16)}
+                  onChange={(event) => setScheduledAt(event.target.value)}
+                />
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">{t("campaign.consentNote")}</p>
+          </>
+        )}
+      </div>
+
+      <DialogFooter className="mt-4 pt-4">
+        <Button type="button" variant="ghost" onClick={step === 1 ? onClose : () => setStep(step - 1)}>
+          {step === 1 ? t("common.cancel") : t("common.back")}
+        </Button>
+        {step < 3 ? (
+          <Button type="button" disabled={step === 2 && !targetIsValid} onClick={() => setStep(step + 1)}>
+            {t("common.next")}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            disabled={create.isPending || (schedule && !scheduledAt)}
+            onClick={() => create.mutate()}
+          >
+            <Send className="h-4 w-4" />
+            {schedule ? t("campaign.scheduleButton") : t("campaign.sendNow")}
+          </Button>
+        )}
+      </DialogFooter>
+    </div>
+  );
+}
+
+function PillPicker({
+  label,
+  values,
+  items,
+  onToggle,
+}: {
+  label: string;
+  values: string[];
+  items: { id: string; label: string }[];
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <div className="flex flex-wrap gap-2">
+        {items.map((item) => (
+          <Button
+            key={item.id}
+            type="button"
+            size="sm"
+            variant={values.includes(item.id) ? "default" : "outline"}
+            onClick={() => onToggle(item.id)}
+          >
+            {item.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SwitchRow({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-sm">{label}</span>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
   );
 }
 
@@ -475,25 +885,21 @@ function VacancyForm({
       {/* Language-independent fields. */}
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>{t("vacancies.branch")}</Label>
-          <Select
-            value={editing.branch_id ?? NO_BRANCH}
-            onValueChange={(v) =>
-              setEditing({ ...editing, branch_id: v === NO_BRANCH ? null : v })
+          <PillPicker
+            label={t("vacancies.branches")}
+            values={editing.branch_ids ?? (editing.branch_id ? [editing.branch_id] : [])}
+            items={branchList.map((branch) => ({ id: branch.id, label: branch.name }))}
+            onToggle={(id) =>
+              setEditing({
+                ...editing,
+                branch_ids: toggleId(
+                  editing.branch_ids ?? (editing.branch_id ? [editing.branch_id] : []),
+                  id,
+                ),
+              })
             }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_BRANCH}>{t("common.none")}</SelectItem>
-              {branchList.map((b) => (
-                <SelectItem key={b.id} value={b.id}>
-                  {b.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          />
+          <p className="text-xs text-muted-foreground">{t("vacancies.branchesHint")}</p>
         </div>
 
         <div className="space-y-2">

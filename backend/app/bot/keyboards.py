@@ -9,7 +9,8 @@ Action grammar (unchanged from the inline era, so callbacks and taps share one d
     brpage:{n}              branch list pagination
     vac:{vacancy_id}[:{scope}]  open a vacancy card, remembering which list it came from
     page:{scope}:{n}        vacancy list pagination; scope = branch id | 'general' | 'all'
-    apply:{vacancy_id}      start the application form
+    apply:{vacancy_id}[:{scope}] start the application form in the selected branch
+    applybranch:{vacancy_id}:{branch_id} choose a branch, then start the form
     back:branches           return to the branch list
     back:list:{scope}       return to a vacancy list
     opt:{index}             pick a single_choice option
@@ -228,10 +229,21 @@ def vacancy_card_keyboard(
 ) -> tuple[ReplyKeyboardMarkup, dict]:
     return _build(
         [
-            [(t(lang, "apply"), f"apply:{vacancy_id.hex}")],
+            [(t(lang, "apply"), f"apply:{vacancy_id.hex}:{scope}")],
             [(t(lang, "back"), f"back:list:{scope}")],
         ]
     )
+
+
+def application_branches_keyboard(
+    vacancy_id: uuid.UUID, branches: list[tuple[uuid.UUID, str]], lang: str
+) -> tuple[ReplyKeyboardMarkup, dict]:
+    rows: list[list[Entry]] = [
+        [(f"📍 {name}", f"applybranch:{vacancy_id.hex}:{branch_id.hex}")]
+        for branch_id, name in branches
+    ]
+    rows.append([(t(lang, "cancel_button"), "cancel")])
+    return _build(rows)
 
 
 # --------------------------------------------------------------------------- the form

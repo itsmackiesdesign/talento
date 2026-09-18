@@ -193,6 +193,8 @@ async def _seed_default_statuses(db: AsyncSession, company_id: uuid.UUID) -> Non
                 translations=translations,
                 notify_candidate=notify,
                 color=color,
+                requires_reason=system_key == "rejected",
+                reasons=[],
                 sort_order=index,
             )
         )

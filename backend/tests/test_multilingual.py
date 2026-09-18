@@ -2,11 +2,19 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from app.core.crypto import encrypt
 from app.core.i18n import clean_translations, localized, localized_options, normalise
-from app.models import Application, Branch, Candidate, Company, Question, Vacancy
+from app.models import (
+    Application,
+    Branch,
+    Candidate,
+    Company,
+    Question,
+    Vacancy,
+    vacancy_branches,
+)
 from app.models import Bot as BotModel
 from tests.conftest import BOT_TOKEN, CANDIDATE_ID, TestSession, make_company
 from tests.conftest import feed as _feed
@@ -442,6 +450,9 @@ async def test_branch_names_are_translated_in_the_branch_menu(bot, session, mult
 
         vacancy = await db.get(Vacancy, multi_tenant["vacancy_id"])
         vacancy.branch_id = branch.id
+        await db.execute(
+            insert(vacancy_branches).values(vacancy_id=vacancy.id, branch_id=branch.id)
+        )
         company = await db.get(Company, multi_tenant["company_id"])
         company.branches_enabled = True
         await db.commit()

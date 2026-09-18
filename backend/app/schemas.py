@@ -21,6 +21,7 @@ QuestionType = Literal[
 DatetimeMask = Literal["date", "datetime", "time"]
 QuestionProfileField = Literal["candidate_name", "candidate_photo"]
 BillingMode = Literal["unlimited", "pay_per_application"]
+CampaignAudience = Literal["everyone", "selected_vacancies", "selected_statuses"]
 
 
 class ORMModel(BaseModel):
@@ -377,6 +378,8 @@ class VacancyBase(BaseModel):
     status: VacancyStatus = "draft"
     is_hot: bool = False
     photo_url: str | None = None
+    branch_ids: list[uuid.UUID] = Field(default_factory=list)
+    # Kept for backwards compatibility with clients that still submit one branch.
     branch_id: uuid.UUID | None = None
     translations: Translations | None = None
 
@@ -403,6 +406,7 @@ class VacancyUpdate(BaseModel):
     status: VacancyStatus | None = None
     is_hot: bool | None = None
     photo_url: str | None = None
+    branch_ids: list[uuid.UUID] | None = None
     branch_id: uuid.UUID | None = None
     translations: Translations | None = None
     # Distinguishes "don't touch branch_id" from "set it to NULL".
@@ -413,6 +417,8 @@ class VacancyOut(ORMModel):
     id: uuid.UUID
     branch_id: uuid.UUID | None
     branch_name: str | None = None
+    branch_ids: list[uuid.UUID] = Field(default_factory=list)
+    branch_names: list[str] = Field(default_factory=list)
     title: str
     description: str
     city: str | None
@@ -431,6 +437,7 @@ class VacancyOut(ORMModel):
 
 
 class VacancyDuplicate(BaseModel):
+    branch_ids: list[uuid.UUID] | None = None
     branch_id: uuid.UUID | None = None
     title: str | None = None
 
@@ -589,6 +596,8 @@ class StatusHistoryOut(BaseModel):
     # itself is later renamed or deleted.
     from_status_label: str | None
     to_status_label: str
+    reason: str | None
+    reason_is_other: bool
     changed_by_name: str | None
     created_at: datetime
 
@@ -622,9 +631,25 @@ class ApplicationPage(BaseModel):
 
 class StatusUpdate(BaseModel):
     status_id: uuid.UUID
+    reason: Annotated[str, Field(max_length=500)] | None = None
+    reason_is_other: bool = False
 
 
 # --------------------------------------------------------------------------- application statuses
+
+
+def _clean_status_reasons(value: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for raw_reason in value:
+        reason = raw_reason.strip()
+        if not reason:
+            raise ValueError("reasons cannot be blank")
+        key = reason.casefold()
+        if key not in seen:
+            seen.add(key)
+            cleaned.append(reason)
+    return cleaned
 
 
 class ApplicationStatusCreate(BaseModel):
@@ -632,6 +657,13 @@ class ApplicationStatusCreate(BaseModel):
     translations: Translations | None = None
     notify_candidate: bool = True
     color: Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")] = "#3b82f6"
+    requires_reason: bool = False
+    reasons: list[Annotated[str, Field(max_length=200)]] = Field(default_factory=list)
+
+    @field_validator("reasons")
+    @classmethod
+    def clean_reasons(cls, value: list[str]) -> list[str]:
+        return _clean_status_reasons(value)
 
 
 class ApplicationStatusUpdate(BaseModel):
@@ -639,6 +671,8 @@ class ApplicationStatusUpdate(BaseModel):
     translations: Translations | None = None
     notify_candidate: bool | None = None
     color: Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")] | None = None
+    requires_reason: bool | None = None
+    reasons: list[Annotated[str, Field(max_length=200)]] | None = None
 
     @field_validator("color")
     @classmethod
@@ -647,6 +681,13 @@ class ApplicationStatusUpdate(BaseModel):
             raise ValueError("color cannot be null")
         return value
 
+    @field_validator("reasons")
+    @classmethod
+    def clean_reasons(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            raise ValueError("reasons cannot be null")
+        return _clean_status_reasons(value)
+
 
 class ApplicationStatusOut(ORMModel):
     id: uuid.UUID
@@ -654,9 +695,72 @@ class ApplicationStatusOut(ORMModel):
     translations: Translations = {}
     notify_candidate: bool
     color: str
+    requires_reason: bool
+    reasons: list[str]
+    system_key: str | None
     is_system: bool
     sort_order: int
     application_count: int = 0
+
+
+# --------------------------------------------------------------------------- vacancy campaigns
+
+
+class VacancyCampaignTarget(BaseModel):
+    audience_type: CampaignAudience = "everyone"
+    source_vacancy_ids: list[uuid.UUID] = Field(default_factory=list)
+    source_status_ids: list[uuid.UUID] = Field(default_factory=list)
+    branch_ids: list[uuid.UUID] = Field(default_factory=list)
+    languages: list[Language] = Field(default_factory=list)
+    excluded_candidate_ids: list[uuid.UUID] = Field(default_factory=list)
+    exclude_applied: bool = False
+    exclude_rejected: bool = False
+
+    @model_validator(mode="after")
+    def validate_audience_selection(self):
+        if self.audience_type == "selected_vacancies" and not self.source_vacancy_ids:
+            raise ValueError("Select at least one source vacancy")
+        if self.audience_type == "selected_statuses" and not self.source_status_ids:
+            raise ValueError("Select at least one application status")
+        return self
+
+
+class VacancyCampaignEstimate(BaseModel):
+    count: int
+
+
+class VacancyCampaignCreate(VacancyCampaignTarget):
+    intro_text: Annotated[str, Field(max_length=1000)] = ""
+    scheduled_at: datetime | None = None
+
+
+class VacancyCampaignOut(ORMModel):
+    id: uuid.UUID
+    vacancy_id: uuid.UUID
+    intro_text: str
+    audience_type: CampaignAudience
+    source_vacancy_ids: list[str]
+    source_status_ids: list[str]
+    branch_ids: list[str]
+    languages: list[Language]
+    excluded_candidate_ids: list[str]
+    exclude_applied: bool
+    exclude_rejected: bool
+    status: str
+    scheduled_at: datetime | None
+    total_recipients: int
+    sent_count: int
+    failed_count: int
+    blocked_count: int
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class CampaignCandidateOut(ORMModel):
+    id: uuid.UUID
+    first_name: str
+    telegram_username: str | None
 
 
 # --------------------------------------------------------------------------- dashboard

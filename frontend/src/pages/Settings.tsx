@@ -854,6 +854,7 @@ function StatusRowBody({ row, t }: { row: ApplicationStatusOut; t: (key: string)
             </Badge>
           )}
           {!row.notify_candidate && <Badge variant="outline">{t("statuses.silent")}</Badge>}
+          {row.requires_reason && <Badge variant="outline">{t("statuses.reasonRequired")}</Badge>}
         </div>
         <p className="text-xs text-muted-foreground">
           {t("statuses.applicationsCount")}: {row.application_count}
@@ -889,6 +890,9 @@ function StatusesTab() {
       if (row.is_system && row.id) {
         return api.applicationStatuses.update(row.id, {
           color: row.color ?? DEFAULT_STATUS_COLOR,
+          ...(row.system_key === "rejected"
+            ? { reasons: (row.reasons ?? []).map((reason) => reason.trim()).filter(Boolean) }
+            : {}),
         });
       }
       const payload = {
@@ -896,6 +900,8 @@ function StatusesTab() {
         notify_candidate: row.notify_candidate ?? true,
         translations: row.translations ?? {},
         color: row.color ?? DEFAULT_STATUS_COLOR,
+        requires_reason: row.requires_reason ?? false,
+        reasons: (row.reasons ?? []).map((reason) => reason.trim()).filter(Boolean),
       };
       return row.id
         ? api.applicationStatuses.update(row.id, payload)
@@ -1013,6 +1019,8 @@ function StatusesTab() {
               notify_candidate: true,
               translations: {},
               color: DEFAULT_STATUS_COLOR,
+              requires_reason: false,
+              reasons: [],
             })
           }
         >
@@ -1102,6 +1110,20 @@ function StatusForm({
 }) {
   const { ordered, active, setActive } = useLanguageTabs(enabledLanguages, baseLanguage);
   const field = useTranslatedField(editing, setEditing, active, baseLanguage);
+  const [reasonDraft, setReasonDraft] = useState("");
+  const isRejected = editing.system_key === "rejected";
+  const showReasonSettings = !editing.is_system || isRejected;
+  const reasonRequired = isRejected || Boolean(editing.requires_reason);
+
+  function addReason() {
+    const reason = reasonDraft.trim();
+    if (!reason) return;
+    const existing = editing.reasons ?? [];
+    if (!existing.some((item) => item.trim().toLowerCase() === reason.toLowerCase())) {
+      setEditing({ ...editing, reasons: [...existing, reason] });
+    }
+    setReasonDraft("");
+  }
 
   return (
     <form
@@ -1146,6 +1168,83 @@ function StatusForm({
             />
           </div>
         </>
+      )}
+
+      {showReasonSettings && (
+        <div className="space-y-3 rounded-lg border p-3">
+          {!isRejected && (
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="require-status-reason">{t("statuses.requireReason")}</Label>
+                <p className="text-xs text-muted-foreground">
+                  {t("statuses.requireReasonHint")}
+                </p>
+              </div>
+              <Switch
+                id="require-status-reason"
+                checked={editing.requires_reason ?? false}
+                onCheckedChange={(checked) =>
+                  setEditing({ ...editing, requires_reason: checked })
+                }
+              />
+            </div>
+          )}
+
+          {reasonRequired && (
+            <div className="space-y-2">
+              <div>
+                <Label>{t("statuses.reasons")}</Label>
+                <p className="text-xs text-muted-foreground">{t("statuses.reasonsHint")}</p>
+              </div>
+              {(editing.reasons ?? []).map((reason, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Input
+                    value={reason}
+                    onChange={(event) => {
+                      const reasons = [...(editing.reasons ?? [])];
+                      reasons[index] = event.target.value;
+                      setEditing({ ...editing, reasons });
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t("common.delete")}
+                    onClick={() =>
+                      setEditing({
+                        ...editing,
+                        reasons: (editing.reasons ?? []).filter((_, itemIndex) => itemIndex !== index),
+                      })
+                    }
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <Input
+                  value={reasonDraft}
+                  placeholder={t("statuses.reasonPlaceholder")}
+                  onChange={(event) => setReasonDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addReason();
+                    }
+                  }}
+                />
+                <Button type="button" variant="outline" onClick={addReason} disabled={!reasonDraft.trim()}>
+                  <Plus className="h-4 w-4" /> {t("statuses.addReason")}
+                </Button>
+              </div>
+              <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                <span>{t("applications.otherReason")}</span>
+                <Badge variant="secondary">{t("statuses.builtIn")}</Badge>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       <div className="space-y-2">

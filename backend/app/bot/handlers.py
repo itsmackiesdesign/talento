@@ -20,7 +20,7 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 from redis.asyncio import Redis
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import fsm, keyboards, menu
@@ -47,8 +47,10 @@ from app.models import (
     ApplicationStatusHistory,
     Branch,
     Candidate,
+    CompanyCandidate,
     News,
     Vacancy,
+    vacancy_branches,
 )
 from app.services import telegram as tg
 from app.services.billing import (
@@ -110,9 +112,20 @@ async def _active_vacancies(
 ) -> list[Vacancy]:
     stmt = select(Vacancy).where(Vacancy.company_id == company_id, Vacancy.status == "active")
     if general:
-        stmt = stmt.where(Vacancy.branch_id.is_(None))
+        stmt = stmt.where(
+            ~select(vacancy_branches.c.vacancy_id)
+            .where(vacancy_branches.c.vacancy_id == Vacancy.id)
+            .exists()
+        )
     elif branch_id is not None:
-        stmt = stmt.where(Vacancy.branch_id == branch_id)
+        stmt = stmt.where(
+            select(vacancy_branches.c.vacancy_id)
+            .where(
+                vacancy_branches.c.vacancy_id == Vacancy.id,
+                vacancy_branches.c.branch_id == branch_id,
+            )
+            .exists()
+        )
     return list((await db.scalars(stmt.order_by(Vacancy.sort_order, Vacancy.created_at))).all())
 
 
@@ -121,11 +134,24 @@ async def _branch_menu_items(db: AsyncSession, company_id: uuid.UUID, lang: str)
     counts = dict(
         (
             await db.execute(
-                select(Vacancy.branch_id, func.count(Vacancy.id))
+                select(vacancy_branches.c.branch_id, func.count(vacancy_branches.c.vacancy_id))
+                .join(Vacancy, Vacancy.id == vacancy_branches.c.vacancy_id)
                 .where(Vacancy.company_id == company_id, Vacancy.status == "active")
-                .group_by(Vacancy.branch_id)
+                .group_by(vacancy_branches.c.branch_id)
             )
         ).all()
+    )
+    general_count = (
+        await db.scalar(
+            select(func.count(Vacancy.id)).where(
+                Vacancy.company_id == company_id,
+                Vacancy.status == "active",
+                ~select(vacancy_branches.c.vacancy_id)
+                .where(vacancy_branches.c.vacancy_id == Vacancy.id)
+                .exists(),
+            )
+        )
+        or 0
     )
     branches = (
         await db.scalars(
@@ -140,8 +166,8 @@ async def _branch_menu_items(db: AsyncSession, company_id: uuid.UUID, lang: str)
         for b in branches
         if counts.get(b.id, 0) > 0
     ]
-    if counts.get(None, 0) > 0:
-        items.append((None, "general", None, counts[None]))
+    if general_count > 0:
+        items.append((None, "general", None, general_count))
     return items
 
 
@@ -171,7 +197,11 @@ async def _show_vacancy_list(
         show_back = False
     elif scope == "general":
         vacancies = await _active_vacancies(db, ctx.company_id, None, general=True)
-        show_back = True
+        # When "general" is the only bucket with openings, _show_branches deliberately
+        # skips its one-item selector. A "Back to branches" button would therefore loop
+        # straight back to this same screen; show the main-menu button instead.
+        branch_items = await _branch_menu_items(db, ctx.company_id, lang)
+        show_back = any(branch_id is not None for branch_id, *_rest in branch_items)
     else:
         vacancies = await _active_vacancies(db, ctx.company_id, _hex_to_uuid(scope))
         show_back = True
@@ -252,14 +282,38 @@ async def _show_vacancy_card(
         )
         return
 
-    branch = await db.get(Branch, vacancy.branch_id) if vacancy.branch_id else None
+    scoped_branch_id = _hex_to_uuid(scope) if scope not in (None, "all", "general", "hot") else None
+    branch = None
+    if scoped_branch_id is not None:
+        branch = await db.scalar(
+            select(Branch)
+            .join(vacancy_branches, vacancy_branches.c.branch_id == Branch.id)
+            .where(
+                vacancy_branches.c.vacancy_id == vacancy.id,
+                Branch.id == scoped_branch_id,
+            )
+        )
     if scope is None:
         if not ctx.company.branches_enabled:
             scope = "all"
-        elif vacancy.branch_id:
-            scope = vacancy.branch_id.hex
         else:
-            scope = "general"
+            assigned = list(
+                await db.scalars(
+                    select(Branch)
+                    .join(vacancy_branches, vacancy_branches.c.branch_id == Branch.id)
+                    .where(vacancy_branches.c.vacancy_id == vacancy.id)
+                    .order_by(Branch.sort_order, Branch.created_at)
+                )
+            )
+            if len(assigned) == 1:
+                branch = assigned[0]
+                scope = branch.id.hex
+            elif assigned:
+                # A direct link does not identify a location. The Apply action will ask the
+                # candidate which of the vacancy's branches they mean.
+                scope = "all"
+            else:
+                scope = "general"
 
     card = render_vacancy_card(lang, vacancy, branch)
     if vacancy.photo_url:
@@ -631,6 +685,7 @@ async def _start_application(
     tg_user,
     lang: str,
     vacancy_id: uuid.UUID,
+    branch_id: uuid.UUID | None = None,
 ) -> None:
     vacancy = await db.get(Vacancy, vacancy_id)
     if vacancy is None or vacancy.company_id != ctx.company_id or vacancy.status != "active":
@@ -640,6 +695,32 @@ async def _start_application(
             _main_menu(ctx, lang),
         )
         return
+
+    branch_rows = (
+        await db.execute(
+            select(Branch.id, Branch.name)
+            .join(vacancy_branches, vacancy_branches.c.branch_id == Branch.id)
+            .where(vacancy_branches.c.vacancy_id == vacancy.id, Branch.is_active.is_(True))
+            .order_by(Branch.sort_order, Branch.created_at)
+        )
+    ).all()
+    branch_ids = {row.id for row in branch_rows}
+    if branch_id is not None and branch_id not in branch_ids:
+        await message.answer(t(lang, "vacancy_gone"))
+        return
+    if branch_id is None:
+        if len(branch_rows) == 1:
+            branch_id = branch_rows[0].id
+        elif len(branch_rows) > 1:
+            await _send_menu(
+                message,
+                redis,
+                ctx,
+                tg_user_id,
+                t(lang, "choose_branch"),
+                keyboards.application_branches_keyboard(vacancy.id, list(branch_rows), lang),
+            )
+            return
 
     existing_row = (
         await db.execute(
@@ -678,10 +759,17 @@ async def _start_application(
     questions = await collect_questions(db, ctx.company_id, vacancy_id, lang)
     if not questions:
         # No form configured — the tap itself is the application.
-        await _create_application(message, ctx, db, redis, lang, vacancy, [], {}, tg_user)
+        await _create_application(
+            message, ctx, db, redis, lang, vacancy, branch_id, [], {}, tg_user
+        )
         return
 
-    state = fsm.FormState(vacancy_id=vacancy_id.hex, questions=questions, lang=lang)
+    state = fsm.FormState(
+        vacancy_id=vacancy_id.hex,
+        branch_id=branch_id.hex if branch_id else None,
+        questions=questions,
+        lang=lang,
+    )
     await fsm.save(redis, ctx.bot_id, tg_user_id, state)
     await message.answer(t(lang, "form_start"))
     await _ask_current(message, redis, ctx, tg_user_id, state, lang)
@@ -694,6 +782,7 @@ async def _create_application(
     redis: Redis,
     lang: str,
     vacancy: Vacancy,
+    branch_id: uuid.UUID | None,
     questions: list,
     answers: dict,
     tg_user,
@@ -741,6 +830,7 @@ async def _create_application(
     application = Application(
         company_id=ctx.company_id,
         vacancy_id=vacancy.id,
+        branch_id=branch_id,
         candidate_id=candidate.id,
         status_id=new_status.id,
         answers=payload,
@@ -883,6 +973,19 @@ async def _dispatch_action(
         if chosen not in (ctx.company.enabled_languages or []):
             return
         await language.remember(redis, db, ctx.bot_id, tg_user_id, chosen)
+        candidate_id = await db.scalar(
+            select(Candidate.id).where(Candidate.telegram_user_id == tg_user_id)
+        )
+        if candidate_id is not None:
+            await db.execute(
+                update(CompanyCandidate)
+                .where(
+                    CompanyCandidate.company_id == ctx.company_id,
+                    CompanyCandidate.candidate_id == candidate_id,
+                )
+                .values(language=chosen)
+            )
+            await db.commit()
         await _send_menu(
             message, redis, ctx, tg_user_id,
             t(chosen, "language_set"),
@@ -890,7 +993,13 @@ async def _dispatch_action(
         )
 
     elif action == "back:branches":
-        await _show_branches(message, redis, db, ctx, tg_user_id, lang)
+        branch_items = await _branch_menu_items(db, ctx.company_id, lang)
+        if len(branch_items) == 1 and branch_items[0][0] is None:
+            # Handles stale reply/inline keyboards already visible in Telegram from before
+            # the one-general-bucket navigation fix.
+            await _show_main_menu(message, redis, ctx, tg_user_id, lang)
+        else:
+            await _show_branches(message, redis, db, ctx, tg_user_id, lang)
 
     elif action.startswith("back:list:"):
         scope = action.split(":", 2)[2]
@@ -926,11 +1035,23 @@ async def _dispatch_action(
                 message, redis, db, ctx, tg_user_id, lang, vacancy_id, scope
             )
 
+    elif action.startswith("applybranch:"):
+        parts = action.split(":", 2)
+        vacancy_id = _hex_to_uuid(parts[1])
+        branch_id = _hex_to_uuid(parts[2]) if len(parts) > 2 else None
+        if vacancy_id and branch_id:
+            await _start_application(
+                message, redis, db, ctx, tg_user_id, tg_user, lang, vacancy_id, branch_id
+            )
+
     elif action.startswith("apply:"):
-        vacancy_id = _hex_to_uuid(action.split(":", 1)[1])
+        parts = action.split(":", 2)
+        vacancy_id = _hex_to_uuid(parts[1])
+        scope = parts[2] if len(parts) > 2 else None
+        branch_id = _hex_to_uuid(scope) if scope else None
         if vacancy_id:
             await _start_application(
-                message, redis, db, ctx, tg_user_id, tg_user, lang, vacancy_id
+                message, redis, db, ctx, tg_user_id, tg_user, lang, vacancy_id, branch_id
             )
 
     elif action == "cancel":
@@ -1047,7 +1168,16 @@ async def _dispatch_form_action(
             )
             return
         await _create_application(
-            message, ctx, db, redis, form_lang, vacancy, state.questions, state.answers, tg_user
+            message,
+            ctx,
+            db,
+            redis,
+            form_lang,
+            vacancy,
+            uuid.UUID(state.branch_id) if state.branch_id else None,
+            state.questions,
+            state.answers,
+            tg_user,
         )
 
 

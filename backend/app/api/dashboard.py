@@ -85,8 +85,7 @@ async def stats(
         await db.execute(
             select(Branch.id, Branch.name, func.count(Application.id))
             .select_from(Application)
-            .join(Vacancy, Vacancy.id == Application.vacancy_id)
-            .outerjoin(Branch, Branch.id == Vacancy.branch_id)
+            .outerjoin(Branch, Branch.id == Application.branch_id)
             .where(scoped)
             .group_by(Branch.id, Branch.name)
             .order_by(func.count(Application.id).desc())

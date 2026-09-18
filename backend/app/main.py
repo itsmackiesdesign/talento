@@ -25,6 +25,7 @@ from app.api import (
     questions,
     uploads,
     vacancies,
+    vacancy_campaigns,
     webhook,
 )
 from app.api import auth as auth_api
@@ -86,6 +87,7 @@ api_v1.include_router(companies.router)
 api_v1.include_router(bots.router)
 api_v1.include_router(branches.router)
 api_v1.include_router(vacancies.router)
+api_v1.include_router(vacancy_campaigns.router)
 api_v1.include_router(questions.router)
 api_v1.include_router(news.router)
 api_v1.include_router(uploads.router)

@@ -171,6 +171,7 @@ async def seed(email: str, password: str) -> None:
                     # Leave the last one unassigned so the bot's "general vacancies" bucket
                     # and the branch filters both have data.
                     branch_id=branches[order].id if order < len(branches) else None,
+                    branches=[branches[order]] if order < len(branches) else [],
                     title=title,
                     description=description,
                     city=branches[order].city if order < len(branches) else "Ташкент",

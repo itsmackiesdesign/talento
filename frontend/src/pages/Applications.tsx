@@ -41,6 +41,12 @@ import type { ApplicationListItem, ApplicationStatusOut } from "@/lib/types";
 import { cn, formatDate, formatDateTime } from "@/lib/utils";
 
 const ALL = "__all__";
+const OTHER_REASON = "__other__";
+
+type PendingStatusChange = {
+  id: string;
+  statusId: string;
+};
 
 function questionTextToPlainText(value: string): string {
   const withoutMarkdown = value
@@ -215,6 +221,9 @@ export default function ApplicationsPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [comment, setComment] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<PendingStatusChange | null>(null);
+  const [selectedReason, setSelectedReason] = useState("");
+  const [otherReason, setOtherReason] = useState("");
   // question_id -> chosen option, e.g. "is a student?" -> "Да". Only meaningful once a
   // single vacancy is picked, since that's what determines which questions even exist.
   const [answerFilters, setAnswerFilters] = useState<Record<string, string>>({});
@@ -274,8 +283,13 @@ export default function ApplicationsPage() {
     ]);
 
   const setStatus = useMutation({
-    mutationFn: ({ id, statusId }: { id: string; statusId: string }) =>
-      api.applications.setStatus(id, statusId),
+    mutationFn: ({
+      id,
+      statusId,
+      reason,
+      reasonIsOther,
+    }: PendingStatusChange & { reason?: string; reasonIsOther?: boolean }) =>
+      api.applications.setStatus(id, statusId, reason, reasonIsOther),
     onMutate: async ({ id, statusId }) => {
       await qc.cancelQueries({ queryKey: ["applications", filters] });
       const previous = qc.getQueryData(["applications", filters]);
@@ -294,6 +308,9 @@ export default function ApplicationsPage() {
       toast.error(e.message);
     },
     onSuccess: async () => {
+      setPendingStatusChange(null);
+      setSelectedReason("");
+      setOtherReason("");
       await invalidate();
       toast.success(t("toast.statusChanged"));
     },
@@ -321,18 +338,39 @@ export default function ApplicationsPage() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
+  const items = applications.data?.items ?? [];
+  const statusList = statuses.data ?? [];
+  const statusById = new Map(statusList.map((s) => [s.id, s]));
+  const reasonStatus = pendingStatusChange
+    ? statusById.get(pendingStatusChange.statusId)
+    : undefined;
+  const resolvedReason = selectedReason === OTHER_REASON ? otherReason.trim() : selectedReason;
+
+  function closeReasonDialog() {
+    setPendingStatusChange(null);
+    setSelectedReason("");
+    setOtherReason("");
+  }
+
+  function requestStatusChange(id: string, statusId: string) {
+    const target = statusById.get(statusId);
+    if (target?.requires_reason || target?.system_key === "rejected") {
+      setPendingStatusChange({ id, statusId });
+      setSelectedReason("");
+      setOtherReason("");
+      return;
+    }
+    setStatus.mutate({ id, statusId });
+  }
+
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over) return;
     const statusId = String(over.id);
     const current = applications.data?.items.find((a) => a.id === active.id);
     if (!current || current.status_id === statusId) return;
-    setStatus.mutate({ id: String(active.id), statusId });
+    requestStatusChange(String(active.id), statusId);
   }
-
-  const items = applications.data?.items ?? [];
-  const statusList = statuses.data ?? [];
-  const statusById = new Map(statusList.map((s) => [s.id, s]));
 
   return (
     <>
@@ -554,7 +592,7 @@ export default function ApplicationsPage() {
                 <Select
                   value={detail.data.status_id}
                   onValueChange={(v) =>
-                    setStatus.mutate({ id: detail.data!.id, statusId: v })
+                    requestStatusChange(detail.data!.id, v)
                   }
                 >
                   <SelectTrigger className="w-44">
@@ -675,6 +713,12 @@ export default function ApplicationsPage() {
                       {h.from_status_label ? `${h.from_status_label} → ` : ""}
                       {h.to_status_label}
                       {h.changed_by_name && ` · ${h.changed_by_name}`}
+                      {h.reason && (
+                        <span className="mt-0.5 block pl-3 text-foreground">
+                          {t("applications.reason")}: {h.reason_is_other && `${t("applications.otherReason")}: `}
+                          {h.reason}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ol>
@@ -682,6 +726,91 @@ export default function ApplicationsPage() {
             </>
           ) : null}
         </DrawerContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingStatusChange)}
+        onOpenChange={(open) => !open && closeReasonDialog()}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {t("applications.reason")}{reasonStatus ? ` · ${reasonStatus.label}` : ""}
+            </DialogTitle>
+            <DialogDescription>{t("applications.chooseReason")}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2" role="radiogroup">
+            {(reasonStatus?.reasons ?? []).map((reason) => {
+              const selected = selectedReason === reason;
+              return (
+                <button
+                  key={reason}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent",
+                    selected && "border-primary bg-accent",
+                  )}
+                  onClick={() => setSelectedReason(reason)}
+                >
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-primary">
+                    {selected && <span className="h-2 w-2 rounded-full bg-primary" />}
+                  </span>
+                  {reason}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selectedReason === OTHER_REASON}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent",
+                selectedReason === OTHER_REASON && "border-primary bg-accent",
+              )}
+              onClick={() => setSelectedReason(OTHER_REASON)}
+            >
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-primary">
+                {selectedReason === OTHER_REASON && (
+                  <span className="h-2 w-2 rounded-full bg-primary" />
+                )}
+              </span>
+              {t("applications.otherReason")}
+            </button>
+          </div>
+
+          {selectedReason === OTHER_REASON && (
+            <Textarea
+              autoFocus
+              rows={3}
+              maxLength={500}
+              value={otherReason}
+              placeholder={t("applications.otherReasonPlaceholder")}
+              onChange={(event) => setOtherReason(event.target.value)}
+            />
+          )}
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={closeReasonDialog}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              disabled={!resolvedReason || setStatus.isPending || !pendingStatusChange}
+              onClick={() =>
+                pendingStatusChange &&
+                setStatus.mutate({
+                  ...pendingStatusChange,
+                  reason: resolvedReason,
+                  reasonIsOther: selectedReason === OTHER_REASON,
+                })
+              }
+            >
+              {t("applications.confirmStatusChange")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
 
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>

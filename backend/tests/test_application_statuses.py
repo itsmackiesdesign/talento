@@ -30,6 +30,9 @@ async def test_new_company_is_seeded_with_six_stages_in_order(client):
         "#10b981",
         "#ef4444",
     ]
+    assert [r["requires_reason"] for r in rows] == [False, False, False, False, False, True]
+    assert all(r["reasons"] == [] for r in rows)
+    assert rows[-1]["system_key"] == "rejected"
     # System steps ship with ru/uz/en so candidate notifications always work, even though
     # the HR can never touch them.
     assert rows[0]["translations"]["en"]["label"] == "New"
@@ -40,7 +43,13 @@ async def test_custom_stage_lifecycle(client):
 
     created = await client.post(
         "/api/v1/application-statuses",
-        json={"label": "Тестовое задание", "notify_candidate": True, "color": "#EC4899"},
+        json={
+            "label": "Тестовое задание",
+            "notify_candidate": True,
+            "color": "#EC4899",
+            "requires_reason": True,
+            "reasons": ["Не выполнено", " Не выполнено ", "Нет связи"],
+        },
         headers=owner["headers"],
     )
     assert created.status_code == 201
@@ -48,6 +57,8 @@ async def test_custom_stage_lifecycle(client):
     assert body["label"] == "Тестовое задание"
     assert body["is_system"] is False
     assert body["color"] == "#ec4899"
+    assert body["requires_reason"] is True
+    assert body["reasons"] == ["Не выполнено", "Нет связи"]
     # New custom stages land just before the two terminal system steps.
     rows = await _list(client, owner["headers"])
     assert rows[-3]["id"] == body["id"]
@@ -95,6 +106,22 @@ async def test_system_steps_reject_edit_and_delete(client):
         headers=owner["headers"],
     )
     assert invalid_color.status_code == 422
+
+    rejected_row = next(r for r in rows if r["system_key"] == "rejected")
+    reasons = await client.patch(
+        f"/api/v1/application-statuses/{rejected_row['id']}",
+        json={"reasons": ["Не подходит опыт", "Позиция закрыта"]},
+        headers=owner["headers"],
+    )
+    assert reasons.status_code == 200
+    assert reasons.json()["reasons"] == ["Не подходит опыт", "Позиция закрыта"]
+
+    cannot_disable_reason = await client.patch(
+        f"/api/v1/application-statuses/{rejected_row['id']}",
+        json={"requires_reason": False},
+        headers=owner["headers"],
+    )
+    assert cannot_disable_reason.status_code == 400
 
     deleted = await client.delete(
         f"/api/v1/application-statuses/{new_row['id']}", headers=owner["headers"]

@@ -24,7 +24,8 @@ from aiogram import BaseMiddleware, Dispatcher
 from aiogram import Bot as AiogramBot
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -32,7 +33,7 @@ from app.core.crypto import decrypt
 from app.core.db import SessionLocal
 from app.core.logging import get_logger
 from app.models import Bot as BotModel
-from app.models import Company
+from app.models import Candidate, Company, CompanyCandidate
 
 log = get_logger(__name__)
 
@@ -62,9 +63,44 @@ class LanguageMiddleware(BaseMiddleware):
                 enabled=ctx.company.enabled_languages,
                 default=ctx.company.default_language,
             )
+            await _remember_interaction(data["db"], ctx, user, data["lang"])
         else:  # pragma: no cover - updates without a user (channel posts) never reach here
             data["lang"] = ctx.lang if ctx else "ru"
         return await handler(event, data)
+
+
+async def _remember_interaction(db: AsyncSession, ctx: "BotContext", user, lang: str) -> None:
+    """Upsert the tenant's reachable audience before dispatching every user update."""
+
+    candidate_id = await db.scalar(
+        insert(Candidate)
+        .values(
+            telegram_user_id=user.id,
+            telegram_username=user.username,
+            first_name=user.first_name or "",
+        )
+        .on_conflict_do_update(
+            index_elements=[Candidate.telegram_user_id],
+            set_={
+                "telegram_username": user.username,
+                "first_name": user.first_name or "",
+            },
+        )
+        .returning(Candidate.id)
+    )
+    await db.execute(
+        insert(CompanyCandidate)
+        .values(
+            company_id=ctx.company_id,
+            candidate_id=candidate_id,
+            language=lang,
+        )
+        .on_conflict_do_update(
+            constraint="uq_company_candidate",
+            set_={"language": lang, "last_interaction_at": func.now()},
+        )
+    )
+    await db.commit()
 
 
 def get_dispatcher() -> Dispatcher:

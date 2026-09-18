@@ -126,6 +126,35 @@ async def test_vacancy_filter_by_branch(client):
     assert [v["title"] for v in general.json()] == ["General"]
 
 
+async def test_vacancy_can_be_assigned_to_multiple_branches(client):
+    owner = await make_company(client)
+    branch_a = await _branch(client, owner, "A")
+    branch_b = await _branch(client, owner, "B")
+
+    vacancy = await _vacancy(
+        client,
+        owner,
+        "Shared role",
+        branch_ids=[branch_a["id"], branch_b["id"]],
+    )
+
+    assert vacancy["branch_ids"] == [branch_a["id"], branch_b["id"]]
+    assert vacancy["branch_names"] == ["A", "B"]
+    for branch in (branch_a, branch_b):
+        response = await client.get(
+            f"/api/v1/vacancies?branch_id={branch['id']}", headers=owner["headers"]
+        )
+        assert [item["title"] for item in response.json()] == ["Shared role"]
+
+    updated = await client.patch(
+        f"/api/v1/vacancies/{vacancy['id']}",
+        json={"branch_ids": [branch_b["id"]]},
+        headers=owner["headers"],
+    )
+    assert updated.status_code == 200
+    assert updated.json()["branch_ids"] == [branch_b["id"]]
+
+
 async def test_duplicate_copies_questions_into_another_branch(client):
     owner = await make_company(client)
     branch_a = await _branch(client, owner, "A")

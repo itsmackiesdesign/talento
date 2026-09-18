@@ -340,6 +340,63 @@ async def test_repeated_same_status_does_not_duplicate_history(client):
     assert len(detail.json()["history"]) == 1
 
 
+async def test_rejected_status_requires_configured_or_other_reason(client):
+    owner = await make_company(client)
+    seed = await _seed_application(owner["company_id"])
+    rejected_id = await _status_id(owner["company_id"], "rejected")
+
+    configured = await client.patch(
+        f"/api/v1/application-statuses/{rejected_id}",
+        json={"reasons": ["Недостаточно опыта", "Вакансия закрыта"]},
+        headers=owner["headers"],
+    )
+    assert configured.status_code == 200, configured.text
+
+    missing = await client.patch(
+        f"/api/v1/applications/{seed['application_id']}/status",
+        json={"status_id": rejected_id},
+        headers=owner["headers"],
+    )
+    assert missing.status_code == 422
+
+    unknown = await client.patch(
+        f"/api/v1/applications/{seed['application_id']}/status",
+        json={"status_id": rejected_id, "reason": "Unknown"},
+        headers=owner["headers"],
+    )
+    assert unknown.status_code == 422
+
+    with _no_celery():
+        selected = await client.patch(
+            f"/api/v1/applications/{seed['application_id']}/status",
+            json={"status_id": rejected_id, "reason": "Недостаточно опыта"},
+            headers=owner["headers"],
+        )
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["history"][-1]["reason"] == "Недостаточно опыта"
+    assert selected.json()["history"][-1]["reason_is_other"] is False
+
+    new_id = await _status_id(owner["company_id"], "new")
+    with _no_celery():
+        await client.patch(
+            f"/api/v1/applications/{seed['application_id']}/status",
+            json={"status_id": new_id},
+            headers=owner["headers"],
+        )
+        other = await client.patch(
+            f"/api/v1/applications/{seed['application_id']}/status",
+            json={
+                "status_id": rejected_id,
+                "reason": "  Кандидат попросил отменить  ",
+                "reason_is_other": True,
+            },
+            headers=owner["headers"],
+        )
+    assert other.status_code == 200, other.text
+    assert other.json()["history"][-1]["reason"] == "Кандидат попросил отменить"
+    assert other.json()["history"][-1]["reason_is_other"] is True
+
+
 async def test_invalid_status_is_rejected(client):
     owner = await make_company(client)
     seed = await _seed_application(owner["company_id"])

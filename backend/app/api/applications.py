@@ -49,7 +49,7 @@ def _base_query(company_id: uuid.UUID) -> Select:
         .join(Vacancy, Vacancy.id == Application.vacancy_id)
         .join(Candidate, Candidate.id == Application.candidate_id)
         .join(ApplicationStatus, ApplicationStatus.id == Application.status_id)
-        .outerjoin(Branch, Branch.id == Vacancy.branch_id)
+        .outerjoin(Branch, Branch.id == Application.branch_id)
         .where(Application.company_id == company_id)
     )
 
@@ -128,10 +128,10 @@ def _apply_filters(
         stmt = stmt.where(Application.vacancy_id == vacancy_id)
     if branch_id:
         if branch_id.lower() in ("null", "none"):
-            stmt = stmt.where(Vacancy.branch_id.is_(None))
+            stmt = stmt.where(Application.branch_id.is_(None))
         else:
             try:
-                stmt = stmt.where(Vacancy.branch_id == uuid.UUID(branch_id))
+                stmt = stmt.where(Application.branch_id == uuid.UUID(branch_id))
             except ValueError:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST, "branch_id must be a UUID or 'null'"
@@ -458,6 +458,8 @@ async def get_application(
             StatusHistoryOut(
                 from_status_label=h.from_status_label,
                 to_status_label=h.to_status_label,
+                reason=h.reason,
+                reason_is_other=h.reason_is_other,
                 changed_by_name=h.user.full_name if h.user else None,
                 created_at=h.created_at,
             )
@@ -480,6 +482,21 @@ async def update_status(
 
     if app.status_id != payload.status_id:
         target = await get_owned_or_404(db, ApplicationStatus, payload.status_id, company.id)
+        reason: str | None = None
+        reason_is_other = False
+        if target.requires_reason or target.system_key == "rejected":
+            reason = (payload.reason or "").strip()
+            if not reason:
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "A reason is required for this status",
+                )
+            reason_is_other = payload.reason_is_other
+            if not reason_is_other and reason not in (target.reasons or []):
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "Select one of this status's reasons or use Other",
+                )
         app.status_id = target.id
         db.add(
             ApplicationStatusHistory(
@@ -488,6 +505,8 @@ async def update_status(
                 to_status_id=target.id,
                 from_status_label=current_status.label,
                 to_status_label=target.label,
+                reason=reason,
+                reason_is_other=reason_is_other,
                 changed_by=user.id,
             )
         )

@@ -6,6 +6,14 @@ import pytest
 from app.workers import tasks
 
 
+def test_campaign_keyboard_has_no_candidate_unsubscribe_action():
+    keyboard = tasks._campaign_keyboard("en", "https://t.me/example_bot?start=vacancy_1")
+    buttons = [button for row in keyboard["inline_keyboard"] for button in row]
+    assert buttons == [
+        {"text": "Open vacancy", "url": "https://t.me/example_bot?start=vacancy_1"}
+    ]
+
+
 @pytest.mark.asyncio
 async def test_worker_task_disposes_async_connections(monkeypatch):
     disposed = False

@@ -8,12 +8,14 @@ import asyncio
 import re
 import uuid
 from collections.abc import Coroutine
+from datetime import UTC, datetime
 from html import escape, unescape
 from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
+from app.bot.forms import render_vacancy_card
 from app.bot.markup import to_plain
 from app.bot.texts import t
 from app.core.config import settings
@@ -28,8 +30,11 @@ from app.models import (
     Branch,
     Candidate,
     Company,
+    CompanyCandidate,
     Question,
     Vacancy,
+    VacancyCampaign,
+    VacancyCampaignRecipient,
 )
 from app.services import telegram as tg
 from app.services.candidate_profiles import resolve_candidate_profile
@@ -40,6 +45,147 @@ log = get_logger(__name__)
 TELEGRAM_CAPTION_LIMIT = 1024
 TELEGRAM_MESSAGE_LIMIT = 4000
 _HTML_TAG = re.compile(r"<[^>]+>")
+
+
+@celery_app.task(name="talento.send_vacancy_campaign", max_retries=1, default_retry_delay=60)
+def send_vacancy_campaign(campaign_id: str) -> str:
+    return asyncio.run(_run_with_fresh_db(_send_vacancy_campaign(campaign_id)))
+
+
+def _campaign_keyboard(lang: str, deep_link: str) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [[{"text": t(lang, "campaign_open"), "url": deep_link}]]
+    }
+
+
+def _campaign_is_blocked(exc: tg.TelegramError) -> bool:
+    description = exc.description.casefold()
+    return exc.code == 403 or any(
+        phrase in description for phrase in ("blocked", "deactivated", "chat not found")
+    )
+
+
+async def _send_campaign_message(
+    token: str,
+    recipient: VacancyCampaignRecipient,
+    vacancy: Vacancy,
+    branch: Branch | None,
+    bot_username: str,
+    intro_text: str,
+) -> None:
+    lang = normalise(recipient.language) or "ru"
+    card = render_vacancy_card(lang, vacancy, branch)
+    text = f"{escape(intro_text)}\n\n{card}" if intro_text else card
+    deep_link = f"https://t.me/{bot_username}?start=vacancy_{vacancy.id.hex}"
+    markup = _campaign_keyboard(lang, deep_link)
+
+    if vacancy.photo_url:
+        try:
+            if len(text) <= TELEGRAM_CAPTION_LIMIT:
+                await tg.send_photo(
+                    token,
+                    recipient.telegram_user_id,
+                    vacancy.photo_url,
+                    text,
+                    reply_markup=markup,
+                )
+                return
+            await tg.send_photo(token, recipient.telegram_user_id, vacancy.photo_url, "")
+        except tg.TelegramError as exc:
+            # A broken/private vacancy image must not prevent the actual notification.
+            log.warning(
+                "campaign_photo_failed",
+                campaign_id=str(recipient.campaign_id),
+                candidate_id=str(recipient.candidate_id),
+                error=exc.description,
+            )
+    await tg.send_message(
+        token,
+        recipient.telegram_user_id,
+        text[:TELEGRAM_MESSAGE_LIMIT],
+        reply_markup=markup,
+    )
+
+
+async def _send_vacancy_campaign(campaign_id: str) -> str:
+    campaign_uuid = uuid.UUID(campaign_id)
+    async with SessionLocal() as db:
+        row = (
+            await db.execute(
+                select(VacancyCampaign, Vacancy, Bot, Branch)
+                .join(Vacancy, Vacancy.id == VacancyCampaign.vacancy_id)
+                .join(Bot, Bot.company_id == VacancyCampaign.company_id)
+                .outerjoin(Branch, Branch.id == Vacancy.branch_id)
+                .where(VacancyCampaign.id == campaign_uuid)
+            )
+        ).first()
+        if row is None:
+            return "campaign not found"
+        campaign, vacancy, bot, branch = row
+        if campaign.status in {"completed", "cancelled"}:
+            return campaign.status
+        if not bot.is_active:
+            campaign.status = "failed"
+            campaign.completed_at = datetime.now(UTC)
+            await db.commit()
+            return "bot inactive"
+
+        campaign.status = "sending"
+        campaign.started_at = campaign.started_at or datetime.now(UTC)
+        await db.commit()
+        token = decrypt(bot.token_encrypted)
+
+        recipients = list(
+            await db.scalars(
+                select(VacancyCampaignRecipient)
+                .where(
+                    VacancyCampaignRecipient.campaign_id == campaign_uuid,
+                    VacancyCampaignRecipient.status == "pending",
+                )
+                .order_by(VacancyCampaignRecipient.created_at)
+            )
+        )
+        for recipient in recipients:
+            try:
+                await _send_campaign_message(
+                    token,
+                    recipient,
+                    vacancy,
+                    branch,
+                    bot.bot_username,
+                    campaign.intro_text,
+                )
+            except tg.TelegramError as exc:
+                recipient.error = exc.description[:1000]
+                if _campaign_is_blocked(exc):
+                    recipient.status = "blocked"
+                    campaign.blocked_count += 1
+                    await db.execute(
+                        update(CompanyCandidate)
+                        .where(
+                            CompanyCandidate.company_id == campaign.company_id,
+                            CompanyCandidate.candidate_id == recipient.candidate_id,
+                        )
+                        .values(notifications_enabled=False)
+                    )
+                else:
+                    recipient.status = "failed"
+                    campaign.failed_count += 1
+            else:
+                recipient.status = "sent"
+                recipient.sent_at = datetime.now(UTC)
+                campaign.sent_count += 1
+            await db.commit()
+            # Stay comfortably below Telegram's per-bot broadcast throughput ceiling.
+            await asyncio.sleep(0.05)
+
+        campaign.status = "completed"
+        campaign.completed_at = datetime.now(UTC)
+        await db.commit()
+        return (
+            f"sent={campaign.sent_count} blocked={campaign.blocked_count} "
+            f"failed={campaign.failed_count}"
+        )
 
 
 async def _run_with_fresh_db(coro: Coroutine[Any, Any, str]) -> str:
@@ -62,7 +208,7 @@ def notify_new_application(application_id: str) -> str:
 
 
 def _panel_button(application_id: uuid.UUID) -> dict[str, Any] | None:
-    panel_url = f'{settings.FRONTEND_URL.rstrip("/")}/applications/{application_id}'
+    panel_url = f"{settings.FRONTEND_URL.rstrip('/')}/applications/{application_id}"
     parsed = urlparse(panel_url)
     hostname = (parsed.hostname or "").lower()
     if parsed.scheme != "https" or hostname in {"localhost", "127.0.0.1", "::1"}:
@@ -153,8 +299,7 @@ def _common_answers_text(
         # New snapshots carry their scope. The ID fallback keeps applications submitted
         # before this release useful while the original common question still exists.
         is_common = answer.get("is_common") is True or (
-            "is_common" not in answer
-            and answer.get("question_id") in current_common_question_ids
+            "is_common" not in answer and answer.get("question_id") in current_common_question_ids
         )
         if not is_common or answer.get("profile_field") == "candidate_photo":
             continue
@@ -177,7 +322,7 @@ async def _notify_new_application(application_id: str) -> str:
                 .join(Vacancy, Vacancy.id == Application.vacancy_id)
                 .join(Candidate, Candidate.id == Application.candidate_id)
                 .join(Company, Company.id == Application.company_id)
-                .outerjoin(Branch, Branch.id == Vacancy.branch_id)
+                .outerjoin(Branch, Branch.id == Application.branch_id)
                 .where(Application.id == uuid.UUID(application_id))
             )
         ).first()
@@ -226,9 +371,7 @@ async def _notify_new_application(application_id: str) -> str:
 
 @celery_app.task(name="talento.notify_candidate_status", max_retries=3, default_retry_delay=30)
 def notify_candidate_status(application_id: str, from_status_id: str, to_status_id: str) -> str:
-    return asyncio.run(
-        _run_with_fresh_db(_notify_candidate_status(application_id, to_status_id))
-    )
+    return asyncio.run(_run_with_fresh_db(_notify_candidate_status(application_id, to_status_id)))
 
 
 async def _notify_candidate_status(application_id: str, to_status_id: str) -> str:

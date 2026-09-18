@@ -155,11 +155,11 @@ async def branch_tenant():
         db.add_all(
             [
                 Vacancy(
-                    company_id=company.id, branch_id=chilanzar.id,
+                    company_id=company.id, branch_id=chilanzar.id, branches=[chilanzar],
                     title="Бариста", status="active", sort_order=0,
                 ),
                 Vacancy(
-                    company_id=company.id, branch_id=yunusabad.id,
+                    company_id=company.id, branch_id=yunusabad.id, branches=[yunusabad],
                     title="Кассир", status="active", sort_order=1,
                 ),
             ]

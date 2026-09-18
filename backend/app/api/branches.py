@@ -4,13 +4,13 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.core.deps import CurrentCompany, get_owned_or_404
 from app.core.i18n import clean_translations
-from app.models import Branch, Vacancy
+from app.models import Branch, Vacancy, vacancy_branches
 from app.schemas import BranchCreate, BranchOut, BranchUpdate, ReorderRequest
 
 router = APIRouter(prefix="/branches", tags=["branches"])
@@ -22,9 +22,10 @@ DB = Annotated[AsyncSession, Depends(get_db)]
 
 async def _active_vacancy_counts(db: AsyncSession, company_id: uuid.UUID) -> dict:
     rows = await db.execute(
-        select(Vacancy.branch_id, func.count(Vacancy.id))
+        select(vacancy_branches.c.branch_id, func.count(vacancy_branches.c.vacancy_id))
+        .join(Vacancy, Vacancy.id == vacancy_branches.c.vacancy_id)
         .where(Vacancy.company_id == company_id, Vacancy.status == "active")
-        .group_by(Vacancy.branch_id)
+        .group_by(vacancy_branches.c.branch_id)
     )
     return dict(rows.all())
 
@@ -149,6 +150,32 @@ async def delete_branch(
         # pushing vacancies into another tenant's branch.
         await get_owned_or_404(db, Branch, target_id, company.id)
 
+    affected_ids = list(
+        await db.scalars(
+            select(vacancy_branches.c.vacancy_id).where(
+                vacancy_branches.c.branch_id == branch_id
+            )
+        )
+    )
+    if target_id is not None and affected_ids:
+        already_linked = set(
+            await db.scalars(
+                select(vacancy_branches.c.vacancy_id).where(
+                    vacancy_branches.c.branch_id == target_id,
+                    vacancy_branches.c.vacancy_id.in_(affected_ids),
+                )
+            )
+        )
+        missing = [vacancy_id for vacancy_id in affected_ids if vacancy_id not in already_linked]
+        if missing:
+            await db.execute(
+                insert(vacancy_branches),
+                [{"vacancy_id": vacancy_id, "branch_id": target_id} for vacancy_id in missing],
+            )
+    await db.execute(
+        delete(vacancy_branches).where(vacancy_branches.c.branch_id == branch_id)
+    )
+    # Keep the deprecated singular pointer coherent for old clients.
     await db.execute(
         update(Vacancy)
         .where(Vacancy.company_id == company.id, Vacancy.branch_id == branch_id)

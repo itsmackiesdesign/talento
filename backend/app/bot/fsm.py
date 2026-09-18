@@ -55,6 +55,7 @@ class QuestionSnapshot:
 @dataclass
 class FormState:
     vacancy_id: str
+    branch_id: str | None = None
     questions: list[QuestionSnapshot] = field(default_factory=list)
     current_index: int = 0
     # question_id -> {"value": <canonical value>, "raw": <original>, "skipped": bool}

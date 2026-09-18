@@ -20,6 +20,7 @@ import type {
   ApplicationStatusOut,
   Bot,
   Branch,
+  CampaignCandidate,
   Comment,
   Company,
   DashboardStats,
@@ -36,6 +37,8 @@ import type {
   TokenPair,
   Translations,
   Vacancy,
+  VacancyCampaign,
+  VacancyCampaignTarget,
   WebhookStatus,
 } from "./types";
 
@@ -250,6 +253,19 @@ export const api = {
     duplicate: (id: string, data: { branch_id?: string | null; title?: string }) =>
       post<Vacancy>(`/vacancies/${id}/duplicate`, data),
     reorder: (ids: string[]) => post<void>("/vacancies/reorder", { ids }),
+    estimateCampaign: (id: string, data: VacancyCampaignTarget) =>
+      post<{ count: number }>(`/vacancies/${id}/campaigns/estimate`, data),
+    createCampaign: (
+      id: string,
+      data: VacancyCampaignTarget & { intro_text: string; scheduled_at: string | null },
+    ) => post<VacancyCampaign>(`/vacancies/${id}/campaigns`, data),
+  },
+
+  vacancyCampaigns: {
+    list: () => get<VacancyCampaign[]>("/vacancy-campaigns"),
+    get: (id: string) => get<VacancyCampaign>(`/vacancy-campaigns/${id}`),
+    candidates: (search?: string) =>
+      get<CampaignCandidate[]>(`/vacancy-campaigns/candidates${qs({ search })}`),
   },
 
   questions: {
@@ -284,8 +300,17 @@ export const api = {
       page_size?: number;
     }) => get<ApplicationPage>(`/applications${qs(params)}`),
     get: (id: string) => get<ApplicationDetail>(`/applications/${id}`),
-    setStatus: (id: string, statusId: string) =>
-      patch<ApplicationDetail>(`/applications/${id}/status`, { status_id: statusId }),
+    setStatus: (
+      id: string,
+      statusId: string,
+      reason?: string,
+      reasonIsOther = false,
+    ) =>
+      patch<ApplicationDetail>(`/applications/${id}/status`, {
+        status_id: statusId,
+        reason,
+        reason_is_other: reasonIsOther,
+      }),
     comment: (id: string, text: string) =>
       post<Comment>(`/applications/${id}/comments`, { text }),
     remove: (id: string) => del<void>(`/applications/${id}`),
@@ -301,6 +326,8 @@ export const api = {
       translations?: Translations;
       notify_candidate?: boolean;
       color?: string;
+      requires_reason?: boolean;
+      reasons?: string[];
     }) =>
       post<ApplicationStatusOut>("/application-statuses", data),
     update: (
@@ -310,6 +337,8 @@ export const api = {
         translations: Translations;
         notify_candidate: boolean;
         color: string;
+        requires_reason: boolean;
+        reasons: string[];
       }>,
     ) => patch<ApplicationStatusOut>(`/application-statuses/${id}`, data),
     remove: (id: string, moveApplicationsTo?: string) =>
